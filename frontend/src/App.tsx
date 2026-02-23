@@ -21,6 +21,7 @@ export default function App() {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] })
   const [initialEvents, setInitialEvents] = useState<ThoughtEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const token = localStorage.getItem('implus_token') ?? ''
 
   useEffect(() => {
     if (!authed) return
@@ -100,6 +101,7 @@ export default function App() {
           <StreamView
             graphData={graphData}
             initialEvents={initialEvents}
+            token={token}
             onGraphUpdate={setGraphData}
           />
         )}

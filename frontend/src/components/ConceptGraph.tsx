@@ -46,18 +46,19 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
       ctx.beginPath()
       ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI)
 
+      // spec colours: nodes #2a4a7f, seeds #4a2a7f, active #7ab3ff
       if (isHighlighted) {
-        ctx.fillStyle = '#d4a017'
-        ctx.shadowColor = '#d4a017'
-        ctx.shadowBlur = 15
+        ctx.fillStyle = '#7ab3ff'
+        ctx.shadowColor = '#7ab3ff'
+        ctx.shadowBlur = 18
       } else if (isSeed) {
-        ctx.fillStyle = '#9966ff'
-        ctx.shadowColor = '#9966ff'
-        ctx.shadowBlur = 8
+        ctx.fillStyle = '#4a2a7f'
+        ctx.shadowColor = '#6a3aaf'
+        ctx.shadowBlur = 10
       } else {
-        ctx.fillStyle = '#14b8a6'
-        ctx.shadowColor = '#14b8a6'
-        ctx.shadowBlur = 6
+        ctx.fillStyle = '#2a4a7f'
+        ctx.shadowColor = '#4a9eff'
+        ctx.shadowBlur = 7
       }
       ctx.fill()
       ctx.shadowBlur = 0
@@ -68,7 +69,7 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
         ctx.font = `${fontSize}px 'JetBrains Mono', monospace`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
-        ctx.fillStyle = isSeed ? '#c8a0ff' : '#a0d8d4'
+        ctx.fillStyle = isHighlighted ? '#b8d8ff' : isSeed ? '#a080d0' : '#8ab0d8'
         ctx.fillText(label.length > 14 ? label.slice(0, 13) + '…' : label,
                      node.x, node.y + radius + 2)
       }
@@ -79,7 +80,9 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
   const linkCanvasObject = useCallback(
     (link: any, ctx: CanvasRenderingContext2D) => {
       const strength = link.strength || 0.5
-      ctx.strokeStyle = `rgba(60, 60, 100, ${0.2 + strength * 0.5})`
+      // spec: edges #1a3a5f
+      const a = 0.15 + strength * 0.55
+      ctx.strokeStyle = `rgba(26, 58, 95, ${a})`
       ctx.lineWidth = 0.5 + strength * 1.5
       ctx.beginPath()
       const src = link.source
@@ -114,7 +117,7 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
         nodeRelSize={6}
         linkDirectionalParticles={1}
         linkDirectionalParticleWidth={1}
-        linkDirectionalParticleColor={() => 'rgba(124,124,255,0.4)'}
+        linkDirectionalParticleColor={() => 'rgba(74,158,255,0.5)'}
         cooldownTicks={120}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.4}

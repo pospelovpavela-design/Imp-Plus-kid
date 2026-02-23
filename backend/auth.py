@@ -2,6 +2,10 @@
 Simple single-user auth.
 Uses HMAC-SHA256 signed tokens — no external crypto library needed.
 Format: base64url(payload_json).base64url(hmac_sha256_signature)
+
+Per spec:
+  - Auth REQUIRED for write operations (POST /concept/add, POST /contemplate)
+  - Auth NOT required for read operations (GET /graph, /stream, etc.)
 """
 import base64
 import hashlib
@@ -26,9 +30,10 @@ def _secret() -> bytes:
 
 
 def _password() -> str:
-    p = os.environ.get("IMP_PASSWORD", "")
+    # Support both MIND_PASSWORD (spec) and IMP_PASSWORD (legacy)
+    p = os.environ.get("MIND_PASSWORD") or os.environ.get("IMP_PASSWORD", "")
     if not p:
-        raise RuntimeError("IMP_PASSWORD is not set in .env")
+        raise RuntimeError("MIND_PASSWORD is not set in .env")
     return p
 
 
@@ -49,8 +54,7 @@ def create_token() -> str:
     }).encode()
     payload_b64 = _b64_encode(payload)
     sig = hmac.new(_secret(), payload_b64.encode(), hashlib.sha256).digest()
-    sig_b64 = _b64_encode(sig)
-    return f"{payload_b64}.{sig_b64}"
+    return f"{payload_b64}.{_b64_encode(sig)}"
 
 
 def verify_password(password: str) -> bool:
@@ -63,9 +67,9 @@ def _decode_token(token: str) -> dict:
         if len(parts) != 2:
             raise ValueError("bad format")
         payload_b64, sig_b64 = parts
-        expected_sig = hmac.new(_secret(), payload_b64.encode(), hashlib.sha256).digest()
-        given_sig = _b64_decode(sig_b64)
-        if not hmac.compare_digest(expected_sig, given_sig):
+        expected = hmac.new(_secret(), payload_b64.encode(), hashlib.sha256).digest()
+        given = _b64_decode(sig_b64)
+        if not hmac.compare_digest(expected, given):
             raise ValueError("invalid signature")
         payload = json.loads(_b64_decode(payload_b64))
         if payload.get("exp", 0) < time.time():
@@ -79,13 +83,24 @@ def _decode_token(token: str) -> dict:
 
 def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Security(security),
-    token: str | None = Query(default=None),   # for SSE (EventSource can't set headers)
+    token: str | None = Query(default=None),
 ) -> dict:
-    raw = None
-    if credentials:
-        raw = credentials.credentials
-    elif token:
-        raw = token
+    """For write endpoints — raises 401 if no valid token."""
+    raw = credentials.credentials if credentials else token
     if not raw:
         raise HTTPException(status_code=401, detail="Требуется авторизация")
     return _decode_token(raw)
+
+
+def optional_auth(
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
+    token: str | None = Query(default=None),
+) -> dict | None:
+    """For read endpoints — returns payload if token present, None otherwise."""
+    raw = credentials.credentials if credentials else token
+    if not raw:
+        return None
+    try:
+        return _decode_token(raw)
+    except HTTPException:
+        return None

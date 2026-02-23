@@ -2,9 +2,9 @@
 Stream engine — manages the live thought feed.
 
 Responsibilities:
-  1. Background loop: every SPONTANEOUS_INTERVAL seconds generate a spontaneous thought
-  2. Push function: broadcast any new event to all connected SSE clients
-  3. Milestone checker: detect crossed milestones and trigger reflections
+  1. Background loop: every STREAM_INTERVAL_SECONDS generate a spontaneous thought
+  2. Broadcast: push any new event to all connected SSE clients
+  3. Milestone checker: time-based + count-based milestones → trigger reflections
 """
 import asyncio
 import json
@@ -15,24 +15,24 @@ from typing import Any
 
 import db
 import mind_engine
-from time_engine import format_mind_timestamp, check_new_milestones
+from time_engine import (
+    format_mind_timestamp, check_new_milestones, check_count_milestones, get_time_display,
+)
 
 logger = logging.getLogger("stream_engine")
 
-# Queue for each connected SSE client
 _client_queues: list[asyncio.Queue] = []
 _reached_milestones: set[str] = set()
 
 # Filled in on startup by main.py
 _born_at: float = 0.0
-_concept_graph: Any = None  # ConceptGraph instance
+_concept_graph: Any = None
 
 
 def init(born_at: float, concept_graph: Any) -> None:
     global _born_at, _concept_graph, _reached_milestones
     _born_at = born_at
     _concept_graph = concept_graph
-    # Load already-reached milestones from DB
     for row in db.list_milestones():
         _reached_milestones.add(row["milestone_key"])
 
@@ -51,7 +51,6 @@ def unsubscribe(q: asyncio.Queue) -> None:
 
 
 async def broadcast(event: dict) -> None:
-    """Push event to all connected SSE clients."""
     msg = json.dumps(event, ensure_ascii=False)
     dead = []
     for q in _client_queues:
@@ -63,33 +62,36 @@ async def broadcast(event: dict) -> None:
         _client_queues.remove(q)
 
 
-async def _save_and_broadcast(event_type: str, content: str,
-                               concepts: list[str]) -> None:
+async def _save_and_broadcast(event_type: str, content: str, concepts: list[str]) -> None:
     mind_time = format_mind_timestamp(_born_at)
     now = time.time()
     eid = db.insert_stream_event(mind_time, event_type, content, concepts, now)
-    event = {
+    await broadcast({
         "id": eid,
         "mind_time": mind_time,
         "type": event_type,
         "content": content,
         "concepts_involved": concepts,
         "created_at": now,
-    }
-    await broadcast(event)
+    })
 
 
 async def _check_milestones() -> None:
-    """Check for newly crossed milestones and generate reflections."""
-    new = check_new_milestones(_born_at, _reached_milestones)
-    for key, label in new:
+    """Check both time-based and count-based milestones."""
+    td = get_time_display(_born_at)
+    n_concepts = _concept_graph.node_count()
+    n_edges = _concept_graph.edge_count()
+
+    new_time  = check_new_milestones(_born_at, _reached_milestones)
+    new_count = check_count_milestones(n_concepts, n_edges, _reached_milestones)
+
+    for key, label in new_time + new_count:
         _reached_milestones.add(key)
         names = _concept_graph.all_names()
-        from time_engine import get_time_display
-        td = get_time_display(_born_at)
         try:
             reflection = await mind_engine.generate_milestone_reflection(
-                label, names, td.mind_age_human
+                label, names, td.mind_age_human,
+                connection_count=n_edges,
             )
         except Exception as exc:
             logger.error("Milestone reflection failed: %s", exc)
@@ -100,11 +102,15 @@ async def _check_milestones() -> None:
 
 
 async def spontaneous_loop() -> None:
-    """Background coroutine. Runs forever."""
-    interval = int(os.environ.get("SPONTANEOUS_INTERVAL", 180))
+    """Background coroutine. Runs until cancelled."""
+    # Support both new (STREAM_INTERVAL_SECONDS) and legacy (SPONTANEOUS_INTERVAL) var names
+    interval = int(
+        os.environ.get("STREAM_INTERVAL_SECONDS")
+        or os.environ.get("SPONTANEOUS_INTERVAL")
+        or 180
+    )
     logger.info("Spontaneous loop starting (interval=%ds)", interval)
-    # Initial delay so server can finish booting
-    await asyncio.sleep(10)
+    await asyncio.sleep(10)  # wait for server to fully boot
     while True:
         await asyncio.sleep(interval)
         try:
@@ -114,23 +120,19 @@ async def spontaneous_loop() -> None:
                 continue
             a, b = pair
             names = _concept_graph.all_names()
-            from time_engine import get_time_display
             td = get_time_display(_born_at)
             thought = await mind_engine.generate_spontaneous(
-                a, b, names, td.mind_age_human
+                a, b, names, td.mind_age_human,
+                connection_count=_concept_graph.edge_count(),
             )
-            await _save_and_broadcast(
-                "spontaneous", thought, [a["name"], b["name"]]
-            )
+            await _save_and_broadcast("spontaneous", thought, [a["name"], b["name"]])
         except Exception as exc:
             logger.error("Spontaneous loop error: %s", exc)
 
 
 async def push_reaction(content: str, concepts: list[str]) -> None:
-    """Called externally when a new concept is added."""
     await _save_and_broadcast("reaction", content, concepts)
 
 
 async def push_contemplation(content: str) -> None:
-    """Called externally when user submits a contemplation."""
     await _save_and_broadcast("contemplation", content, [])

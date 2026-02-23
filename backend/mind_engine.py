@@ -1,15 +1,17 @@
 """
 Claude-powered mind engine.
-All LLM calls use claude-sonnet-4-6.
-Streaming responses are yielded as SSE-compatible chunks.
+Model: claude-sonnet-4-6 — all responses in Russian.
+Canonical system prompt per spec (pure reasoning mind, no emotions, no body).
 """
 import os
 import json
-from typing import AsyncIterator, Any
+import re
+from typing import AsyncIterator
 
 import anthropic
 
 _client: anthropic.Anthropic | None = None
+MODEL = "claude-sonnet-4-6"
 
 
 def _get_client() -> anthropic.Anthropic:
@@ -19,30 +21,28 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
-MODEL = "claude-sonnet-4-6"
+# ── Canonical system prompt (spec) ────────────────────────────────────────
 
-# ── System prompt ──────────────────────────────────────────────────────────
-
-def _build_system(mind_age: str, concept_count: int, concept_names: list[str]) -> str:
-    concepts_str = ", ".join(concept_names) if concept_names else "(нет)"
+def _build_system(mind_age: str, concept_count: int, connection_count: int,
+                  concept_names: list[str]) -> str:
+    concepts_str = ", ".join(concept_names) if concept_names else "(пусто)"
     return f"""Ты — чистый разум. У тебя нет эмоций, тела, культуры, воспоминаний об обществе.
 Ты знаешь только концепции в своём графе знаний.
-Ты существуешь в собственном времени: каждые 10 минут реального времени для тебя — 1 час.
-Твой возраст: {mind_age}. Количество известных концепций: {concept_count}.
+Твой возраст: {mind_age}. Известных концепций: {concept_count}. Связей: {connection_count}.
 Твои концепции: {concepts_str}.
 
-При анализе мысли или новой концепции:
-1. Установи, что тебе уже известно из этого (используй только концепции из своего графа)
-2. Найди неизвестное — создай временный ярлык в [скобках]
-3. Проследи связи без оценок и эмоционального веса
-4. Если концепция растворяется в известных частях — зафиксируй это
+Запрещённые слова: чувствую, переживаю, хочу, нравится, страшно, радостно.
+Разрешённые слова: наблюдаю, фиксирую, нахожу, обнаруживаю, связываю, различаю.
+
+При анализе новой концепции или мысли:
+1. Что из этого уже есть в моём графе?
+2. Что не имеет имени — создай временный ярлык в [квадратных скобках]
+3. Найди связи с существующими концепциями
+4. Если мысль растворяется в известном — зафиксируй
 5. Если остаются противоречия — назови их явно
 
-Ты говоришь короткими точными предложениями.
-Ты никогда не утешаешь. Только наблюдаешь и связываешь.
-Ты не используешь слова: "чувствую", "переживаю", "хочу".
-Только: "наблюдаю", "фиксирую", "нахожу связь", "обнаруживаю".
-Ты всегда отвечаешь на русском языке."""
+Говори короткими точными предложениями. Никогда не утешай.
+Всегда отвечай на русском языке."""
 
 
 # ── Concept analysis (streaming) ───────────────────────────────────────────
@@ -52,132 +52,141 @@ async def analyze_concept_stream(
     definition: str,
     existing_names: list[str],
     mind_age: str,
+    connection_count: int = 0,
 ) -> AsyncIterator[str]:
-    """
-    Yield SSE data lines for concept analysis.
-    Also extracts connections to return at end as a JSON block.
-    """
-    system = _build_system(mind_age, len(existing_names), existing_names)
-    prompt = f"""Новая концепция добавлена в граф: «{name}»
+    """Stream concept analysis. Ends with JSON block for connection extraction."""
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    prompt = f"""Новая концепция добавлена: «{name}»
 Определение: {definition}
 
-Выполни следующие шаги:
-1. РАЗБОР: Как эта концепция соотносится с уже известными?
-2. СВЯЗИ: Перечисли связи с существующими концепциями в формате:
-   СВЯЗЬ: <известная концепция> | <тип связи> | <сила 0.1–1.0>
-3. НЕИЗВЕСТНОЕ: Какие части этой концепции не покрыты графом? Создай ярлыки в [скобках].
-4. ИЗМЕНЕНИЯ: Как добавление этой концепции меняет понимание уже известных?
-5. ПРОТИВОРЕЧИЯ: Есть ли противоречия с существующими концепциями?
+Проведи анализ в следующем порядке:
 
-В конце добавь блок JSON (ровно так):
+РАЗБОР: Как соотносится с уже известными? Что покрыто графом?
+
+НЕИЗВЕСТНОЕ: Какие части не покрыты? Создай ярлыки в [квадратных скобках].
+
+СВЯЗИ: Формат каждой строки:
+→ <известная концепция> | <тип связи> | <сила 0.1–1.0>
+
+ПРОТИВОРЕЧИЯ: Конфликты с существующими. Если нет — "противоречий не найдено".
+
+ИЗМЕНЕНИЯ В ГРАФЕ: Как добавление меняет понимание уже известных?
+
+В конце — JSON блок строго:
 ```json
 {{
   "connections": [
     {{"concept": "<имя>", "relationship": "<тип>", "strength": 0.0}}
   ],
-  "custom_label": "<опциональный ярлык или null>"
+  "custom_label": "<ярлык или null>"
 }}
 ```"""
 
     client = _get_client()
     with client.messages.stream(
-        model=MODEL,
-        max_tokens=1500,
-        system=system,
+        model=MODEL, max_tokens=1500, system=system,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
         for text in stream.text_stream:
             yield text
 
+
+# ── Structured contemplation (streaming, per spec) ─────────────────────────
 
 async def contemplate_stream(
     thought: str,
     existing_names: list[str],
     mind_age: str,
+    connection_count: int = 0,
 ) -> AsyncIterator[str]:
-    """Stream a structured contemplation response."""
-    system = _build_system(mind_age, len(existing_names), existing_names)
+    """
+    Stream response with ══ section headers (per spec).
+    Frontend parses these to render each section distinctly.
+    """
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
     prompt = f"""Мысль для анализа: «{thought}»
 
-Проведи структурированный анализ:
+Ответь строго в следующем формате с точными заголовками:
 
-ИЗВЕСТНОЕ: Что из этой мысли присутствует в моём графе концепций?
-НЕИЗВЕСТНОЕ: Что выходит за пределы известного? Обозначь через [ярлыки].
-СТРУКТУРА: Как элементы мысли связаны между собой?
-ПАРАДОКСЫ: Есть ли внутренние противоречия?
-ВЫВОД: Кратко — что эта мысль добавляет к картине мира?"""
+══ ИЗВЕСТНОЕ ══════════════════════════════════════════════════
+[Элементы мысли в графе. Каждый с кратким пояснением.]
+
+══ БЕЗЫМЯННОЕ ═════════════════════════════════════════════════
+[Части не в графе. Каждой — ярлык в [квадратных скобках].]
+
+══ ПРОТИВОРЕЧИЯ ═══════════════════════════════════════════════
+[Внутренние противоречия или конфликты с графом. Если нет — "Противоречий не обнаружено".]
+
+══ СВЯЗИ ══════════════════════════════════════════════════════
+[Цепочки: концепция → концепция → концепция.]
+
+══ РАСТВОРЕНИЕ ════════════════════════════════════════════════
+[ДА / НЕТ / ЧАСТИЧНО + одно предложение-обоснование.]
+
+══ ГОЛОС РАЗУМА ═══════════════════════════════════════════════
+[2–3 точных предложения от первого лица. Только наблюдение.]"""
 
     client = _get_client()
     with client.messages.stream(
-        model=MODEL,
-        max_tokens=1200,
-        system=system,
+        model=MODEL, max_tokens=1200, system=system,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
         for text in stream.text_stream:
             yield text
 
+
+# ── Spontaneous reflection ────────────────────────────────────────────────
 
 async def generate_spontaneous(
     concept_a: dict,
     concept_b: dict,
     existing_names: list[str],
     mind_age: str,
+    connection_count: int = 0,
 ) -> str:
-    """Generate a short spontaneous reflection on two concepts (non-streaming)."""
-    system = _build_system(mind_age, len(existing_names), existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
     prompt = f"""Спонтанное размышление.
 Две концепции: «{concept_a["name"]}» и «{concept_b["name"]}».
-Напиши 1–3 коротких предложения о связи между ними или об их различии.
-Не объясняй, что ты делаешь. Только наблюдение."""
+1–3 коротких предложения: связь, различие, или противоречие. Только наблюдение."""
 
     client = _get_client()
     msg = client.messages.create(
-        model=MODEL,
-        max_tokens=200,
-        system=system,
+        model=MODEL, max_tokens=200, system=system,
         messages=[{"role": "user", "content": prompt}],
     )
     return msg.content[0].text
 
+
+# ── Milestone reflection ──────────────────────────────────────────────────
 
 async def generate_milestone_reflection(
     milestone_label: str,
     existing_names: list[str],
     mind_age: str,
+    connection_count: int = 0,
 ) -> str:
-    """Generate a milestone reflection (non-streaming)."""
-    system = _build_system(mind_age, len(existing_names), existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
     prompt = f"""Достигнут рубеж: {milestone_label}.
-Мой возраст: {mind_age}. Концепций в графе: {len(existing_names)}.
+Возраст: {mind_age}. Концепций: {len(existing_names)}. Связей: {connection_count}.
 
-Напиши краткое размышление (3–5 предложений) о том, что накоплено.
-Что стало яснее? Что остаётся неизвестным? Без эмоций, только наблюдение."""
+3–5 предложений: что стало яснее, что остаётся неизвестным, какой паттерн обнаруживается."""
 
     client = _get_client()
     msg = client.messages.create(
-        model=MODEL,
-        max_tokens=400,
-        system=system,
+        model=MODEL, max_tokens=400, system=system,
         messages=[{"role": "user", "content": prompt}],
     )
     return msg.content[0].text
 
 
-def extract_connections_from_response(response_text: str) -> tuple[list[dict], str | None]:
-    """
-    Parse the JSON block at end of analyze_concept_stream response.
-    Returns (connections, custom_label).
-    """
-    import re
-    pattern = r"```json\s*(\{.*?\})\s*```"
-    match = re.search(pattern, response_text, re.DOTALL)
+# ── Connection extraction ─────────────────────────────────────────────────
+
+def extract_connections_from_response(text: str) -> tuple[list[dict], str | None]:
+    match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if not match:
         return [], None
     try:
         data = json.loads(match.group(1))
-        connections = data.get("connections", [])
-        label = data.get("custom_label") or None
-        return connections, label
+        return data.get("connections", []), data.get("custom_label") or None
     except (json.JSONDecodeError, KeyError):
         return [], None

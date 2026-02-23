@@ -13,17 +13,35 @@ from typing import Optional
 
 MIND_TIME_RATIO: int = 6  # 1 real second → 6 mind seconds
 
-# Milestone thresholds in mind-seconds → (key, label)
-MILESTONES: list[tuple[str, int, str]] = [
-    ("1h",  3_600,       "Первый час"),
-    ("6h",  21_600,      "Шесть часов"),
-    ("12h", 43_200,      "Двенадцать часов"),
-    ("1d",  86_400,      "Первый день"),
-    ("3d",  259_200,     "Три дня"),
-    ("7d",  604_800,     "Первая неделя"),
-    ("14d", 1_209_600,   "Две недели"),
-    ("30d", 2_592_000,   "Первый месяц"),
+# ── Time-based milestones (mind-seconds threshold) ─────────────────────────
+TIME_MILESTONES: list[tuple[str, int, str]] = [
+    ("1h",  3_600,       "Первый час существования"),
+    ("6h",  21_600,      "Шесть часов существования"),
+    ("12h", 43_200,      "Двенадцать часов существования"),
+    ("1d",  86_400,      "Первый день существования"),
+    ("3d",  259_200,     "Три дня существования"),
+    ("7d",  604_800,     "Первая неделя существования"),
+    ("14d", 1_209_600,   "Две недели существования"),
+    ("30d", 2_592_000,   "Первый месяц существования"),
 ]
+
+# ── Count-based milestones (concept or connection count thresholds) ─────────
+# key format: "c100" = 100 concepts, "e500" = 500 edges/connections
+COUNT_MILESTONES: list[tuple[str, str, int, str]] = [
+    ("c10",   "concepts",    10,  "10 концепций в графе"),
+    ("c25",   "concepts",    25,  "25 концепций в графе"),
+    ("c50",   "concepts",    50,  "50 концепций в графе"),
+    ("c100",  "concepts",   100,  "100 концепций в графе"),
+    ("c250",  "concepts",   250,  "250 концепций в графе"),
+    ("c500",  "concepts",   500,  "500 концепций в графе"),
+    ("e50",   "edges",       50,  "50 связей в графе"),
+    ("e200",  "edges",      200,  "200 связей в графе"),
+    ("e500",  "edges",      500,  "500 связей в графе"),
+    ("e1000", "edges",    1_000,  "1000 связей в графе"),
+]
+
+# Combined for legacy callers
+MILESTONES = TIME_MILESTONES
 
 
 @dataclass
@@ -111,13 +129,27 @@ def format_mind_timestamp(born_at: float, at_real: Optional[float] = None) -> st
 
 
 def check_new_milestones(born_at: float, reached_keys: set[str]) -> list[tuple[str, str]]:
-    """
-    Returns list of (key, label) for milestones crossed since last check
-    that are not yet in reached_keys.
-    """
+    """Returns (key, label) for time-based milestones not yet reached."""
     mind_elapsed = get_mind_elapsed_seconds(born_at)
     new: list[tuple[str, str]] = []
-    for key, threshold, label in MILESTONES:
+    for key, threshold, label in TIME_MILESTONES:
         if key not in reached_keys and mind_elapsed >= threshold:
+            new.append((key, label))
+    return new
+
+
+def check_count_milestones(
+    concept_count: int,
+    edge_count: int,
+    reached_keys: set[str],
+) -> list[tuple[str, str]]:
+    """Returns (key, label) for count-based milestones not yet reached."""
+    new: list[tuple[str, str]] = []
+    for key, kind, threshold, label in COUNT_MILESTONES:
+        if key in reached_keys:
+            continue
+        if kind == "concepts" and concept_count >= threshold:
+            new.append((key, label))
+        elif kind == "edges" and edge_count >= threshold:
             new.append((key, label))
     return new

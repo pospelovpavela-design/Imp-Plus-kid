@@ -17,6 +17,66 @@ function extractDiscoveries(text: string): string[] {
   )
 }
 
+// ── Structured ══ section renderer ──────────────────────────────────────────
+
+interface Section { header: string; content: string }
+
+const SECTION_CSS: Record<string, string> = {
+  'БЕЗЫМЯННОЕ':    'безымянное',
+  'ПРОТИВОРЕЧИЯ':  'противоречия',
+  'РАСТВОРЕНИЕ':   'растворение',
+  'ГОЛОС РАЗУМА':  'голос',
+}
+
+function parseSections(text: string): Section[] | null {
+  if (!text.includes('══')) return null
+  const lines = text.split('\n')
+  const sections: Section[] = []
+  let header = ''
+  let buf: string[] = []
+  for (const line of lines) {
+    const m = line.match(/══\s+(.+?)\s+══/)
+    if (m) {
+      if (buf.join('').trim()) sections.push({ header, content: buf.join('\n').trim() })
+      header = m[1]
+      buf = []
+    } else {
+      buf.push(line)
+    }
+  }
+  if (buf.join('').trim()) sections.push({ header, content: buf.join('\n').trim() })
+  return sections.length > 0 ? sections : null
+}
+
+function SectionedResponse({ text, streaming }: { text: string; streaming: boolean }) {
+  const sections = parseSections(text)
+  if (!sections) {
+    return (
+      <div className="mind-text text-text">
+        {text}{streaming && <span className="cursor" />}
+      </div>
+    )
+  }
+  return (
+    <div>
+      {sections.map((sec, i) => {
+        const cls = SECTION_CSS[sec.header] || ''
+        return (
+          <div key={i} className={cls ? `contemplate-section-${cls}` : ''}>
+            {sec.header && (
+              <div className="contemplate-section-header">══ {sec.header} ══</div>
+            )}
+            <div className="contemplate-section-content">
+              {sec.content}
+              {streaming && i === sections.length - 1 && <span className="cursor" />}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function ContemplationView({ onGraphUpdate }: Props) {
   const [mode, setMode] = useState<Mode>('contemplate')
 
@@ -230,10 +290,9 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                 </div>
                 <div
                   ref={responseRef}
-                  className="flex-1 overflow-y-auto border border-border bg-panel px-4 py-3 mind-text text-text"
+                  className="flex-1 overflow-y-auto border border-border bg-panel px-4 py-3"
                 >
-                  {response}
-                  {streaming && <span className="cursor" />}
+                  <SectionedResponse text={response} streaming={streaming} />
                 </div>
               </div>
             )}

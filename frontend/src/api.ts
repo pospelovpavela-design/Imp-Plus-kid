@@ -173,8 +173,13 @@ async function readSSEStream(res: Response, onChunk: (t: string) => void): Promi
           onChunk(parsed.chunk)
         } else if (parsed.done) {
           finalData = parsed
+        } else if (parsed.error) {
+          throw new Error(parsed.error)
         }
-      } catch { /* ignore */ }
+      } catch (e) {
+        if (e instanceof Error && e.message) throw e
+        /* ignore parse errors */
+      }
     }
   }
   return finalData

@@ -131,27 +131,35 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
 
     async def generate():
         full_text = ""
-        async for chunk in mind_engine.analyze_concept_stream(
-            body.name, body.definition, existing_names, td.mind_age_human,
-            connection_count=n_edges,
-        ):
-            full_text += chunk
-            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        try:
+            async for chunk in mind_engine.analyze_concept_stream(
+                body.name, body.definition, existing_names, td.mind_age_human,
+                connection_count=n_edges,
+            ):
+                full_text += chunk
+                yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': f'Ошибка анализа: {exc}'}, ensure_ascii=False)}\n\n"
+            return
 
         # Persist concept + connections
-        cid = graph.add_concept(body.name.strip(), body.definition.strip(),
-                                td.mind_display, time.time())
-        graph.add_processing_log(cid, full_text)
+        try:
+            cid = graph.add_concept(body.name.strip(), body.definition.strip(),
+                                    td.mind_display, time.time())
+            graph.add_processing_log(cid, full_text)
 
-        connections, custom_label = mind_engine.extract_connections_from_response(full_text)
-        for conn in connections:
-            other = db.get_concept_by_name(conn.get("concept", ""))
-            if other:
-                graph.add_connection(cid, other["id"],
-                                     conn.get("relationship", ""),
-                                     float(conn.get("strength", 0.5)))
-        if custom_label:
-            graph.set_custom_label(cid, custom_label)
+            connections, custom_label = mind_engine.extract_connections_from_response(full_text)
+            for conn in connections:
+                other = db.get_concept_by_name(conn.get("concept", ""))
+                if other:
+                    graph.add_connection(cid, other["id"],
+                                         conn.get("relationship", ""),
+                                         float(conn.get("strength", 0.5)))
+            if custom_label:
+                graph.set_custom_label(cid, custom_label)
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': f'Ошибка сохранения: {exc}'}, ensure_ascii=False)}\n\n"
+            return
 
         asyncio.create_task(
             stream_engine.push_reaction(

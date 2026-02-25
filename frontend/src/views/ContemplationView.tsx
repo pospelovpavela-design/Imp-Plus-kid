@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { addConceptStream, contemplateStream, fetchStreamHistory } from '../api'
+import { addConceptStream, contemplateStream, fetchStreamHistory, fetchGraph } from '../api'
 import type { GraphData, ThoughtEvent } from '../types'
 
 type Mode = 'contemplate' | 'add-concept'
@@ -147,7 +147,14 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
     const def = `Неизвестное, обнаруженное разумом в процессе анализа: «${thought.trim()}»`
     try {
       const result = await addConceptStream(label, def, () => {})
-      if (result?.graph) onGraphUpdate(result.graph)
+      if (result?.graph) {
+        onGraphUpdate(result.graph)
+      } else {
+        try {
+          const fresh = await fetchGraph()
+          onGraphUpdate(fresh)
+        } catch { /* ignore */ }
+      }
       setAddedDiscoveries((prev) => new Set(prev).add(label))
     } catch {
       // If already exists, just mark as added
@@ -169,10 +176,22 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
         if (addResponseRef.current)
           addResponseRef.current.scrollTop = addResponseRef.current.scrollHeight
       })
-      if (result?.graph) onGraphUpdate(result.graph)
-      setAddDone(true)
-      setConceptName('')
-      setConceptDef('')
+      if (result?.graph) {
+        onGraphUpdate(result.graph)
+      } else {
+        // Fallback: concept was saved but done-event was lost — fetch fresh graph
+        try {
+          const fresh = await fetchGraph()
+          onGraphUpdate(fresh)
+        } catch { /* ignore secondary fetch errors */ }
+      }
+      if (result !== null) {
+        setAddDone(true)
+        setConceptName('')
+        setConceptDef('')
+      } else {
+        setAddError('Концепция обработана, но ответ сервера не получен. Проверьте БИБЛИОТЕКУ.')
+      }
     } catch (err: any) {
       setAddError(err.message || 'Ошибка добавления концепции')
     } finally {

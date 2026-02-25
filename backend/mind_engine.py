@@ -3,6 +3,7 @@ Groq-powered mind engine.
 Model: llama-3.3-70b-versatile — all responses in Russian.
 Canonical system prompt per spec (pure reasoning mind, no emotions, no body).
 """
+import asyncio
 import os
 import json
 import re
@@ -83,14 +84,18 @@ async def analyze_concept_stream(
 ```"""
 
     client = _get_client()
-    stream = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=1500,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        stream=True,
+    loop = asyncio.get_event_loop()
+    stream = await loop.run_in_executor(
+        None,
+        lambda: client.chat.completions.create(
+            model=MODEL,
+            max_tokens=1500,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            stream=True,
+        ),
     )
     for chunk in stream:
         text = chunk.choices[0].delta.content
@@ -134,14 +139,18 @@ async def contemplate_stream(
 [2–3 точных предложения от первого лица. Только наблюдение.]"""
 
     client = _get_client()
-    stream = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=1200,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        stream=True,
+    loop = asyncio.get_event_loop()
+    stream = await loop.run_in_executor(
+        None,
+        lambda: client.chat.completions.create(
+            model=MODEL,
+            max_tokens=1200,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            stream=True,
+        ),
     )
     for chunk in stream:
         text = chunk.choices[0].delta.content
@@ -164,13 +173,17 @@ async def generate_spontaneous(
 1–3 коротких предложения: связь, различие, или противоречие. Только наблюдение."""
 
     client = _get_client()
-    msg = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=200,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+    loop = asyncio.get_event_loop()
+    msg = await loop.run_in_executor(
+        None,
+        lambda: client.chat.completions.create(
+            model=MODEL,
+            max_tokens=200,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        ),
     )
     return msg.choices[0].message.content
 
@@ -190,13 +203,17 @@ async def generate_milestone_reflection(
 3–5 предложений: что стало яснее, что остаётся неизвестным, какой паттерн обнаруживается."""
 
     client = _get_client()
-    msg = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=400,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+    loop = asyncio.get_event_loop()
+    msg = await loop.run_in_executor(
+        None,
+        lambda: client.chat.completions.create(
+            model=MODEL,
+            max_tokens=400,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        ),
     )
     return msg.choices[0].message.content
 

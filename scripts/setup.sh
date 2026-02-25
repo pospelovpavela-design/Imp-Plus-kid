@@ -62,7 +62,7 @@ if [ ! -f .env ]; then
     warn ".env created from .env.example"
     echo ""
     echo -e "   ${BOLD}Required:${RESET} edit .env and set:"
-    echo "     ANTHROPIC_API_KEY=sk-ant-..."
+    echo "     GROQ_API_KEY=gsk_...   # https://console.groq.com/keys"
     echo "     MIND_PASSWORD=your_secret_password"
     echo ""
 else
@@ -99,12 +99,12 @@ echo "────────────────────────�
 echo ""
 
 # Check if .env is actually configured
-ANTHROPIC_OK=false
+GROQ_OK=false
 PASSWORD_OK=false
-grep -q "^ANTHROPIC_API_KEY=sk-" .env 2>/dev/null && ANTHROPIC_OK=true
+grep -q "^GROQ_API_KEY=gsk_" .env 2>/dev/null && GROQ_OK=true
 grep -q "^MIND_PASSWORD=." .env 2>/dev/null && PASSWORD_OK=true
 
-if $ANTHROPIC_OK && $PASSWORD_OK; then
+if $GROQ_OK && $PASSWORD_OK; then
     echo -e "${GREEN}Ready to run!${RESET}"
     echo ""
     echo "  Terminal 1:  make backend   (or: cd backend && .venv/bin/uvicorn main:app --reload --port 8000)"
@@ -112,8 +112,8 @@ if $ANTHROPIC_OK && $PASSWORD_OK; then
     echo "  Browser:     http://localhost:5173"
 else
     warn "Before running, edit .env:"
-    $ANTHROPIC_OK || echo "     ANTHROPIC_API_KEY=sk-ant-..."
-    $PASSWORD_OK  || echo "     MIND_PASSWORD=your_password"
+    $GROQ_OK    || echo "     GROQ_API_KEY=gsk_...   # https://console.groq.com/keys"
+    $PASSWORD_OK || echo "     MIND_PASSWORD=your_password"
     echo ""
     echo "  Then: make backend  (Terminal 1)"
     echo "        make frontend (Terminal 2)"

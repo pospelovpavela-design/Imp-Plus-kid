@@ -46,13 +46,13 @@ ok "Node $(node --version)"
 # ── 3. .env ──────────────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
     cp .env.example .env
-    warn ".env created — fill in ANTHROPIC_API_KEY and MIND_PASSWORD"
+    warn ".env created — fill in GROQ_API_KEY and MIND_PASSWORD"
 fi
 
-KEY=$(grep "^ANTHROPIC_API_KEY=" .env | cut -d= -f2 || true)
+KEY=$(grep "^GROQ_API_KEY=" .env | cut -d= -f2 || true)
 PASS=$(grep "^MIND_PASSWORD=" .env | cut -d= -f2 || true)
 
-if [ -z "$KEY" ] || [ "$KEY" = "sk-ant-..." ]; then
+if [ -z "$KEY" ] || [ "$KEY" = "gsk_..." ]; then
     echo ""
     echo -e "${YELLOW}Нужно заполнить .env${RESET}"
     echo ""

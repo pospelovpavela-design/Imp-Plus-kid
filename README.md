@@ -9,7 +9,7 @@
 | Backend   | Python 3.11+ · FastAPI · SQLite |
 | Frontend  | React 18 · TypeScript · Vite · Tailwind CSS |
 | Граф      | networkx · react-force-graph-2d |
-| LLM       | Claude API (`claude-sonnet-4-6`) |
+| LLM       | Groq API (`llama-3.3-70b-versatile`) |
 
 ---
 
@@ -19,7 +19,7 @@
 
 - **Python 3.11+** — `brew install python@3.12`
 - **Node.js 18+** — `brew install node`
-- **Ключ Claude API** — [console.anthropic.com](https://console.anthropic.com)
+- **Ключ Groq API** — [console.groq.com](https://console.groq.com/keys)
 
 ### Установка
 
@@ -39,7 +39,7 @@ make install
 
 ```bash
 # Минимальный набор — отредактируйте .env:
-ANTHROPIC_API_KEY=sk-ant-...
+GROQ_API_KEY=gsk_...
 MIND_PASSWORD=ваш_пароль
 ```
 
@@ -79,7 +79,8 @@ make reset-mind   # удаляет data/mind.db, разум рождается �
 
 | Переменная | Описание | По умолчанию |
 |------------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Ключ Claude API | *обязательно* |
+| `GROQ_API_KEY` | Ключ Groq API | *обязательно* |
+| `GROQ_MODEL` | Модель Groq | `llama-3.3-70b-versatile` |
 | `MIND_PASSWORD` | Пароль доступа (запись) | *обязательно* |
 | `SESSION_SECRET` | Секрет подписи токенов (≥32 символа) | *обязательно* |
 | `DATABASE_URL` | Путь к SQLite | `sqlite:///./data/mind.db` |

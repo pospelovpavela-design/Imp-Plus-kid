@@ -231,12 +231,16 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
 
     async def generate():
         full_text = ""
-        async for chunk in mind_engine.contemplate_stream(
-            body.thought, existing_names, td.mind_age_human,
-            connection_count=graph.edge_count(),
-        ):
-            full_text += chunk
-            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        try:
+            async for chunk in mind_engine.contemplate_stream(
+                body.thought, existing_names, td.mind_age_human,
+                connection_count=graph.edge_count(),
+            ):
+                full_text += chunk
+                yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': f'Ошибка созерцания: {exc}'}, ensure_ascii=False)}\n\n"
+            return
 
         db.insert_contemplation(body.thought, full_text, td.mind_display, time.time())
         asyncio.create_task(stream_engine.push_contemplation(full_text[:300]))

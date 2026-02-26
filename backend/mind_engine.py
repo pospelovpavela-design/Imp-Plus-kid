@@ -10,14 +10,14 @@ from typing import AsyncIterator
 
 import anthropic
 
-_client: anthropic.Anthropic | None = None
+_client: anthropic.AsyncAnthropic | None = None
 MODEL = "claude-sonnet-4-6"
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        _client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     return _client
 
 
@@ -83,11 +83,11 @@ async def analyze_concept_stream(
 ```"""
 
     client = _get_client()
-    with client.messages.stream(
+    async with client.messages.stream(
         model=MODEL, max_tokens=1500, system=system,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
-        for text in stream.text_stream:
+        async for text in stream.text_stream:
             yield text
 
 
@@ -127,11 +127,11 @@ async def contemplate_stream(
 [2–3 точных предложения от первого лица. Только наблюдение.]"""
 
     client = _get_client()
-    with client.messages.stream(
+    async with client.messages.stream(
         model=MODEL, max_tokens=1200, system=system,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
-        for text in stream.text_stream:
+        async for text in stream.text_stream:
             yield text
 
 
@@ -150,7 +150,7 @@ async def generate_spontaneous(
 1–3 коротких предложения: связь, различие, или противоречие. Только наблюдение."""
 
     client = _get_client()
-    msg = client.messages.create(
+    msg = await client.messages.create(
         model=MODEL, max_tokens=200, system=system,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -172,7 +172,7 @@ async def generate_milestone_reflection(
 3–5 предложений: что стало яснее, что остаётся неизвестным, какой паттерн обнаруживается."""
 
     client = _get_client()
-    msg = client.messages.create(
+    msg = await client.messages.create(
         model=MODEL, max_tokens=400, system=system,
         messages=[{"role": "user", "content": prompt}],
     )

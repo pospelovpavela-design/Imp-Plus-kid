@@ -65,6 +65,8 @@ async def analyze_concept_stream(
 
 НЕИЗВЕСТНОЕ: Какие части не покрыты? Создай ярлыки в [квадратных скобках].
 
+НОВОЕ СЛОВО: Если хотя бы одно безымянное не выражается парой существующих слов — сконструируй одно новое слово по правилам словообразования русского языка. Формат: *неологизм* — краткое объяснение морфологии (из каких частей собрано и почему). Если новое слово не нужно — пропусти этот раздел.
+
 СВЯЗИ: Формат каждой строки:
 → <известная концепция> | <тип связи> | <сила 0.1–1.0>
 
@@ -78,7 +80,8 @@ async def analyze_concept_stream(
   "connections": [
     {{"concept": "<имя>", "relationship": "<тип>", "strength": 0.0}}
   ],
-  "custom_label": "<ярлык или null>"
+  "custom_label": "<ярлык или null>",
+  "neologism": "<новое слово или null>"
 }}
 ```"""
 
@@ -120,6 +123,9 @@ async def contemplate_stream(
 
 ══ БЕЗЫМЯННОЕ ═════════════════════════════════════════════════
 [Части не в графе. Каждой — ярлык в [квадратных скобках].]
+
+══ НОВОЕ СЛОВО ════════════════════════════════════════════════
+[Если хотя бы одно безымянное не выражается парой существующих слов — сконструируй одно новое слово по правилам словообразования русского языка. Формат: *неологизм* — краткое объяснение морфологии. Если не нужно — "Новых слов не требуется".]
 
 ══ ПРОТИВОРЕЧИЯ ═══════════════════════════════════════════════
 [Внутренние противоречия или конфликты с графом. Если нет — "Противоречий не обнаружено".]
@@ -203,12 +209,16 @@ async def generate_milestone_reflection(
 
 # ── Connection extraction ─────────────────────────────────────────────────
 
-def extract_connections_from_response(text: str) -> tuple[list[dict], str | None]:
+def extract_connections_from_response(text: str) -> tuple[list[dict], str | None, str | None]:
     match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if not match:
-        return [], None
+        return [], None, None
     try:
         data = json.loads(match.group(1))
-        return data.get("connections", []), data.get("custom_label") or None
+        return (
+            data.get("connections", []),
+            data.get("custom_label") or None,
+            data.get("neologism") or None,
+        )
     except (json.JSONDecodeError, KeyError):
-        return [], None
+        return [], None, None

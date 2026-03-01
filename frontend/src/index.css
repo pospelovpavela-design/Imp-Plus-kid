@@ -83,6 +83,16 @@ html, body, #root {
 .contemplate-section-противоречия .contemplate-section-content {
   color: #e09090;
 }
+.contemplate-section-неологизм .contemplate-section-content {
+  color: #a0e0c0;
+}
+.neologism-word {
+  color: #40ffb0;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-shadow: 0 0 12px rgba(64, 255, 176, 0.6);
+  font-style: normal;
+}
 
 /* ── Force graph ─────────────────────────────────── */
 canvas { background: transparent !important; }

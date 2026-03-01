@@ -23,9 +23,20 @@ interface Section { header: string; content: string }
 
 const SECTION_CSS: Record<string, string> = {
   'БЕЗЫМЯННОЕ':    'безымянное',
+  'НОВОЕ СЛОВО':   'неологизм',
   'ПРОТИВОРЕЧИЯ':  'противоречия',
   'РАСТВОРЕНИЕ':   'растворение',
   'ГОЛОС РАЗУМА':  'голос',
+}
+
+/** Render *neologism* markers as highlighted spans */
+function renderNeologisms(text: string): React.ReactNode {
+  const parts = text.split(/(\*[^*]+\*)/)
+  return parts.map((part, i) =>
+    part.startsWith('*') && part.endsWith('*')
+      ? <span key={i} className="neologism-word">{part.slice(1, -1)}</span>
+      : part
+  )
 }
 
 function parseSections(text: string): Section[] | null {
@@ -67,7 +78,7 @@ function SectionedResponse({ text, streaming }: { text: string; streaming: boole
               <div className="contemplate-section-header">══ {sec.header} ══</div>
             )}
             <div className="contemplate-section-content">
-              {sec.content}
+              {renderNeologisms(sec.content)}
               {streaming && i === sections.length - 1 && <span className="cursor" />}
             </div>
           </div>

@@ -143,15 +143,16 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
                                 td.mind_display, time.time())
         graph.add_processing_log(cid, full_text)
 
-        connections, custom_label = mind_engine.extract_connections_from_response(full_text)
+        connections, custom_label, neologism = mind_engine.extract_connections_from_response(full_text)
         for conn in connections:
             other = db.get_concept_by_name(conn.get("concept", ""))
             if other:
                 graph.add_connection(cid, other["id"],
                                      conn.get("relationship", ""),
                                      float(conn.get("strength", 0.5)))
-        if custom_label:
-            graph.set_custom_label(cid, custom_label)
+        label = custom_label or neologism
+        if label:
+            graph.set_custom_label(cid, label)
 
         asyncio.create_task(
             stream_engine.push_reaction(

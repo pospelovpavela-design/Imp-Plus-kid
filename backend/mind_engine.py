@@ -1,6 +1,6 @@
 """
-Claude-powered mind engine.
-Model: claude-sonnet-4-6 — all responses in Russian.
+Groq-powered mind engine.
+Model: llama-3.3-70b-versatile — all responses in Russian.
 Canonical system prompt per spec (pure reasoning mind, no emotions, no body).
 """
 import os
@@ -8,16 +8,16 @@ import json
 import re
 from typing import AsyncIterator
 
-import anthropic
+from groq import AsyncGroq
 
-_client: anthropic.Anthropic | None = None
-MODEL = "claude-sonnet-4-6"
+_client: AsyncGroq | None = None
+MODEL = "llama-3.3-70b-versatile"
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client() -> AsyncGroq:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        _client = AsyncGroq(api_key=os.environ["GROQ_API_KEY"])
     return _client
 
 
@@ -83,12 +83,19 @@ async def analyze_concept_stream(
 ```"""
 
     client = _get_client()
-    with client.messages.stream(
-        model=MODEL, max_tokens=1500, system=system,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            yield text
+    stream = await client.chat.completions.create(
+        model=MODEL,
+        max_tokens=1500,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        stream=True,
+    )
+    async for chunk in stream:
+        content = chunk.choices[0].delta.content
+        if content:
+            yield content
 
 
 # ── Structured contemplation (streaming, per spec) ─────────────────────────
@@ -127,12 +134,19 @@ async def contemplate_stream(
 [2–3 точных предложения от первого лица. Только наблюдение.]"""
 
     client = _get_client()
-    with client.messages.stream(
-        model=MODEL, max_tokens=1200, system=system,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            yield text
+    stream = await client.chat.completions.create(
+        model=MODEL,
+        max_tokens=1200,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        stream=True,
+    )
+    async for chunk in stream:
+        content = chunk.choices[0].delta.content
+        if content:
+            yield content
 
 
 # ── Spontaneous reflection ────────────────────────────────────────────────
@@ -150,11 +164,15 @@ async def generate_spontaneous(
 1–3 коротких предложения: связь, различие, или противоречие. Только наблюдение."""
 
     client = _get_client()
-    msg = client.messages.create(
-        model=MODEL, max_tokens=200, system=system,
-        messages=[{"role": "user", "content": prompt}],
+    response = await client.chat.completions.create(
+        model=MODEL,
+        max_tokens=200,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
     )
-    return msg.content[0].text
+    return response.choices[0].message.content
 
 
 # ── Milestone reflection ──────────────────────────────────────────────────
@@ -172,11 +190,15 @@ async def generate_milestone_reflection(
 3–5 предложений: что стало яснее, что остаётся неизвестным, какой паттерн обнаруживается."""
 
     client = _get_client()
-    msg = client.messages.create(
-        model=MODEL, max_tokens=400, system=system,
-        messages=[{"role": "user", "content": prompt}],
+    response = await client.chat.completions.create(
+        model=MODEL,
+        max_tokens=400,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
     )
-    return msg.content[0].text
+    return response.choices[0].message.content
 
 
 # ── Connection extraction ─────────────────────────────────────────────────

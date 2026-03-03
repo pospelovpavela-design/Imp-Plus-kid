@@ -26,7 +26,8 @@ export default function NodeDetail({ node, onClose }: Props) {
   if (!node) return null
 
   return (
-    <div className="absolute bottom-4 right-4 w-80 bg-panel border border-border-bright
+    <div className="absolute bottom-0 md:bottom-4 left-0 md:left-auto right-0 md:right-4
+                    w-full md:w-80 bg-panel border-t md:border border-border-bright
                     shadow-2xl z-10 max-h-[70vh] flex flex-col animate-fade-in">
       {/* Header */}
       <div className="flex items-start justify-between p-3 border-b border-border shrink-0">

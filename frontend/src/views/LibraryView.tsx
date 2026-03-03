@@ -27,9 +27,10 @@ export default function LibraryView() {
     )
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Concept list */}
-      <div className="w-96 flex flex-col border-r border-border overflow-hidden">
+    <div className="flex flex-col md:flex-row h-full overflow-hidden">
+      {/* Concept list — hidden on mobile when concept is selected */}
+      <div className={`md:w-96 w-full flex flex-col md:border-r border-border overflow-hidden
+                       ${selected ? 'hidden md:flex' : 'flex'}`}>
         {/* Toolbar */}
         <div className="p-3 border-b border-border space-y-2 shrink-0">
           <input
@@ -88,14 +89,26 @@ export default function LibraryView() {
         </div>
       </div>
 
-      {/* Detail panel */}
-      <div className="flex-1 overflow-y-auto p-6">
+      {/* Detail panel — hidden on mobile when nothing selected */}
+      <div className={`flex-1 overflow-y-auto p-4 md:p-6
+                       ${!selected ? 'hidden md:flex md:items-center md:justify-center' : 'flex flex-col'}`}>
         {!selected && (
-          <div className="h-full flex items-center justify-center text-text-dim text-xs">
+          <div className="text-text-dim text-xs">
             Выберите концепцию для просмотра
           </div>
         )}
-        {selected && <ConceptDetail concept={selected} />}
+        {selected && (
+          <>
+            {/* Back button — mobile only */}
+            <button
+              onClick={() => setSelected(null)}
+              className="md:hidden flex items-center gap-2 text-xs text-text-dim mb-4 hover:text-text shrink-0"
+            >
+              ← Назад к списку
+            </button>
+            <ConceptDetail concept={selected} />
+          </>
+        )}
       </div>
     </div>
   )

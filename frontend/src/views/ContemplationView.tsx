@@ -207,8 +207,9 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Main content */}
-      <div className="flex-1 flex flex-col p-6 overflow-hidden max-w-3xl mx-auto space-y-4">
+      {/* Main content — hidden on mobile when history is open */}
+      <div className={`flex-1 flex flex-col p-4 md:p-6 overflow-hidden max-w-3xl mx-auto w-full space-y-4
+                       ${showHistory ? 'hidden md:flex' : 'flex'}`}>
         {/* Mode tabs */}
         <div className="flex gap-1 shrink-0">
           {(['contemplate', 'add-concept'] as Mode[]).map((m) => (
@@ -441,9 +442,9 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
         )}
       </div>
 
-      {/* History sidebar */}
+      {/* History sidebar — full width on mobile, fixed sidebar on desktop */}
       {showHistory && (
-        <div className="w-80 border-l border-border flex flex-col overflow-hidden">
+        <div className="flex-1 md:flex-none md:w-80 border-l-0 md:border-l border-border flex flex-col overflow-hidden">
           <div className="px-4 py-3 border-b border-border shrink-0 flex items-center justify-between">
             <span className="text-[10px] uppercase tracking-widest text-text-dim">
               История созерцаний

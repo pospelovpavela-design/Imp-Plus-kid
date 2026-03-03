@@ -16,9 +16,9 @@ export default function StreamView({ graphData, initialEvents, token, onGraphUpd
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left panel — clock + feed (40%) */}
-      <div className="w-[40%] flex flex-col border-r border-border overflow-hidden">
+    <div className="flex flex-col md:flex-row h-full overflow-hidden">
+      {/* Left panel — clock + feed */}
+      <div className="md:w-[40%] w-full h-[48vh] md:h-full flex flex-col border-b md:border-b-0 md:border-r border-border overflow-hidden">
         {/* Clock */}
         <div className="p-4 border-b border-border shrink-0">
           <MindClock />

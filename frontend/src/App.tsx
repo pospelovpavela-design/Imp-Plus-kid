@@ -9,10 +9,10 @@ import type { GraphData, ThoughtEvent } from './types'
 
 type Tab = 'stream' | 'library' | 'contemplate'
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'stream',      label: 'ПОТОК' },
-  { id: 'library',     label: 'БИБЛИОТЕКА' },
-  { id: 'contemplate', label: 'СОЗЕРЦАНИЕ' },
+const TABS: { id: Tab; label: string; icon: string; short: string }[] = [
+  { id: 'stream',      label: 'ПОТОК',      icon: '◈', short: 'Поток' },
+  { id: 'library',     label: 'БИБЛИОТЕКА', icon: '≡', short: 'Граф' },
+  { id: 'contemplate', label: 'СОЗЕРЦАНИЕ', icon: '◇', short: 'Разум' },
 ]
 
 export default function App() {
@@ -57,14 +57,14 @@ export default function App() {
       {/* Top nav bar */}
       <header className="flex items-center gap-0 border-b border-border shrink-0 bg-deep">
         {/* Logo */}
-        <div className="px-5 py-3 border-r border-border">
+        <div className="px-4 md:px-5 py-3 border-r border-border">
           <span className="text-accent font-bold tracking-[0.2em] glow-accent text-sm">
             IMPLUS
           </span>
         </div>
 
-        {/* Tabs */}
-        <nav className="flex flex-1">
+        {/* Tabs — hidden on mobile (bottom nav handles it) */}
+        <nav className="hidden md:flex flex-1">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -83,8 +83,11 @@ export default function App() {
           ))}
         </nav>
 
+        {/* Mobile: flexible spacer */}
+        <div className="flex-1 md:hidden" />
+
         {/* Right: compact clock + logout */}
-        <div className="flex items-center gap-4 px-4 border-l border-border">
+        <div className="flex items-center gap-3 md:gap-4 px-3 md:px-4 border-l border-border">
           <MindClock compact />
           <button
             onClick={() => { logout(); setAuthed(false) }}
@@ -95,8 +98,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-hidden">
+      {/* Main content — pb-16 on mobile reserves space for bottom nav */}
+      <main className="flex-1 overflow-hidden pb-16 md:pb-0">
         {tab === 'stream' && (
           <StreamView
             graphData={graphData}
@@ -112,6 +115,24 @@ export default function App() {
           <ContemplationView onGraphUpdate={setGraphData} />
         )}
       </main>
+
+      {/* Bottom navigation — mobile only */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 flex border-t border-border bg-deep z-50">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-colors relative
+                        ${tab === t.id ? 'text-accent' : 'text-text-dim'}`}
+          >
+            <span className="text-lg leading-none">{t.icon}</span>
+            <span className="text-[10px] uppercase tracking-widest">{t.short}</span>
+            {tab === t.id && (
+              <span className="absolute top-0 left-0 right-0 h-0.5 bg-accent" />
+            )}
+          </button>
+        ))}
+      </nav>
     </div>
   )
 }

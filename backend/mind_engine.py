@@ -8,10 +8,11 @@ import json
 import re
 from typing import AsyncIterator
 
-from groq import AsyncGroq
+from groq import AsyncGroq, RateLimitError
 
 _client: AsyncGroq | None = None
-MODEL = "llama-3.3-70b-versatile"
+MODEL       = "llama-3.3-70b-versatile"  # для анализа концепций и созерцания
+MODEL_FAST  = "llama-3.1-8b-instant"    # для спонтанных мыслей + фоллбэк
 
 
 def _get_client() -> AsyncGroq:
@@ -86,19 +87,26 @@ async def analyze_concept_stream(
 ```"""
 
     client = _get_client()
-    stream = await client.chat.completions.create(
-        model=MODEL,
-        max_tokens=1500,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        stream=True,
-    )
-    async for chunk in stream:
-        content = chunk.choices[0].delta.content
-        if content:
-            yield content
+    for model in (MODEL, MODEL_FAST):
+        try:
+            stream = await client.chat.completions.create(
+                model=model,
+                max_tokens=1500,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=True,
+            )
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
+            return
+        except RateLimitError:
+            if model == MODEL_FAST:
+                raise
+            continue
 
 
 # ── Structured contemplation (streaming, per spec) ─────────────────────────
@@ -140,19 +148,26 @@ async def contemplate_stream(
 [2–3 точных предложения от первого лица. Только наблюдение.]"""
 
     client = _get_client()
-    stream = await client.chat.completions.create(
-        model=MODEL,
-        max_tokens=1200,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        stream=True,
-    )
-    async for chunk in stream:
-        content = chunk.choices[0].delta.content
-        if content:
-            yield content
+    for model in (MODEL, MODEL_FAST):
+        try:
+            stream = await client.chat.completions.create(
+                model=model,
+                max_tokens=1200,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=True,
+            )
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
+            return
+        except RateLimitError:
+            if model == MODEL_FAST:
+                raise
+            continue
 
 
 # ── Spontaneous reflection ────────────────────────────────────────────────
@@ -171,7 +186,7 @@ async def generate_spontaneous(
 
     client = _get_client()
     response = await client.chat.completions.create(
-        model=MODEL,
+        model=MODEL_FAST,
         max_tokens=200,
         messages=[
             {"role": "system", "content": system},
@@ -197,7 +212,7 @@ async def generate_milestone_reflection(
 
     client = _get_client()
     response = await client.chat.completions.create(
-        model=MODEL,
+        model=MODEL_FAST,
         max_tokens=400,
         messages=[
             {"role": "system", "content": system},

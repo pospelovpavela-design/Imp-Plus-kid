@@ -58,6 +58,7 @@ class ConceptGraph:
 
     def _load_from_db(self) -> None:
         for row in db.list_concepts():
+            keys = row.keys()
             self.g.add_node(
                 row["id"],
                 name=row["name"],
@@ -65,6 +66,7 @@ class ConceptGraph:
                 mind_time_added=row["mind_time_added"],
                 real_time_added=row["real_time_added"],
                 is_seed=bool(row["is_seed"]),
+                is_autonomous=bool(row["is_autonomous"]) if "is_autonomous" in keys else False,
                 custom_label=row["custom_label"],
             )
         for row in db.list_connections():
@@ -115,6 +117,7 @@ class ConceptGraph:
                 "id": nid,
                 "name": nd["name"],
                 "is_seed": nd.get("is_seed", False),
+                "is_autonomous": nd.get("is_autonomous", False),
                 "mind_time_added": nd.get("mind_time_added", ""),
                 "degree": self.g.degree(nid),
                 "custom_label": nd.get("custom_label"),
@@ -132,13 +135,15 @@ class ConceptGraph:
     # ── Mutate ────────────────────────────────────────────────────────────
 
     def add_concept(self, name: str, definition: str,
-                    mind_time: str, real_time: float) -> int:
+                    mind_time: str, real_time: float,
+                    is_autonomous: bool = False) -> int:
         """Insert concept into graph and DB. Returns new concept_id."""
-        cid = db.insert_concept(name, definition, mind_time, real_time)
+        cid = db.insert_concept(name, definition, mind_time, real_time,
+                                is_autonomous=is_autonomous)
         self.g.add_node(
             cid, name=name, definition=definition,
             mind_time_added=mind_time, real_time_added=real_time,
-            is_seed=False, custom_label=None,
+            is_seed=False, is_autonomous=is_autonomous, custom_label=None,
         )
         return cid
 

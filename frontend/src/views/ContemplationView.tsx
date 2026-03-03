@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { addConceptStream, contemplateStream, fetchStreamHistory } from '../api'
+import { addConceptStream, checkConceptStream, contemplateStream, fetchStreamHistory } from '../api'
 import type { GraphData, ThoughtEvent } from '../types'
 
 type Mode = 'contemplate' | 'add-concept'
@@ -109,6 +109,12 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
   const [addDone, setAddDone] = useState(false)
   const [addError, setAddError] = useState('')
 
+  // ── Check concept ────────────────────────────────────────────────────────
+  const [checkStreaming, setCheckStreaming] = useState(false)
+  const [checkResponse, setCheckResponse] = useState('')
+  const [checkDone, setCheckDone] = useState(false)
+  const checkResponseRef = useRef<HTMLDivElement>(null)
+
   // ── History ─────────────────────────────────────────────────────────────
   const [history, setHistory] = useState<ThoughtEvent[]>([])
   const [showHistory, setShowHistory] = useState(false)
@@ -129,6 +135,30 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
     setAddResponse('')
     setAddError('')
     setAddDone(false)
+    setCheckResponse('')
+    setCheckDone(false)
+  }
+
+  async function handleCheck() {
+    if (!conceptName.trim() || !conceptDef.trim() || checkStreaming || addStreaming) return
+    setCheckResponse('')
+    setCheckDone(false)
+    setCheckStreaming(true)
+    let full = ''
+    try {
+      await checkConceptStream(conceptName, conceptDef, (chunk) => {
+        full += chunk
+        setCheckResponse(full)
+        if (checkResponseRef.current)
+          checkResponseRef.current.scrollTop = checkResponseRef.current.scrollHeight
+      })
+      setCheckDone(true)
+    } catch (err: any) {
+      setCheckResponse(err.message || 'Ошибка проверки')
+      setCheckDone(true)
+    } finally {
+      setCheckStreaming(false)
+    }
   }
 
   async function handleContemplate() {
@@ -383,7 +413,16 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                              placeholder-text-dim/40 transition-colors"
                 />
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  onClick={handleCheck}
+                  disabled={!conceptName.trim() || !conceptDef.trim() || checkStreaming || addStreaming}
+                  className="px-4 py-2 text-xs uppercase tracking-widest border border-accent/50
+                             text-accent/80 hover:bg-accent/10 hover:border-accent
+                             disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                >
+                  {checkStreaming ? 'Проверка...' : 'Проверить'}
+                </button>
                 <button
                   onClick={handleAddConcept}
                   disabled={!conceptName.trim() || !conceptDef.trim() || addStreaming}
@@ -398,6 +437,23 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                 )}
               </div>
             </div>
+
+            {/* Check response */}
+            {(checkResponse || checkStreaming) && (
+              <div className="shrink-0 border border-accent/20 bg-panel/40 p-3 space-y-1">
+                <div className="text-[10px] uppercase tracking-widest text-accent/60 flex items-center gap-2">
+                  <span>Оценка разума</span>
+                  {checkStreaming && <span className="inline-block w-1.5 h-3 bg-accent animate-blink" />}
+                </div>
+                <div
+                  ref={checkResponseRef}
+                  className="text-text/80 text-xs leading-relaxed mind-text max-h-32 overflow-y-auto"
+                >
+                  {checkResponse}
+                  {checkStreaming && <span className="cursor" />}
+                </div>
+              </div>
+            )}
 
             {addError && (
               <div className="shrink-0 text-red text-xs border border-red/30 bg-red/5 px-3 py-2">

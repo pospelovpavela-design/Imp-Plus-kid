@@ -65,6 +65,10 @@ export default function StreamView({ graphData, initialEvents, token, onGraphUpd
             добавленные
           </div>
           <div className="flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: '#6a4e00', boxShadow: '0 0 6px #c8a84b' }} />
+            синтез разума
+          </div>
+          <div className="flex items-center gap-1.5">
             <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: '#7ab3ff' }} />
             выбранная
           </div>

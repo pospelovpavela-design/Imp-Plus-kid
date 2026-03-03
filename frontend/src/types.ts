@@ -19,6 +19,7 @@ export interface Concept {
   mind_time_added: string
   real_time_added: number
   is_seed: boolean
+  is_autonomous: boolean
   custom_label: string | null
   connection_count: number
   connections: ConceptConnection[]
@@ -40,6 +41,7 @@ export interface GraphNode {
   id: number
   name: string
   is_seed: boolean
+  is_autonomous: boolean
   mind_time_added: string
   degree: number
   custom_label: string | null
@@ -67,7 +69,7 @@ export interface GraphData {
 export interface ThoughtEvent {
   id: number
   mind_time: string
-  type: 'spontaneous' | 'reaction' | 'milestone' | 'contemplation'
+  type: 'spontaneous' | 'reaction' | 'milestone' | 'contemplation' | 'autonomous'
   content: string
   concepts_involved: string[]
   created_at: number

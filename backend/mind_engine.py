@@ -222,6 +222,91 @@ async def generate_milestone_reflection(
     return response.choices[0].message.content
 
 
+# ── Concept check (streaming) ─────────────────────────────────────────────
+
+async def check_concept_stream(
+    name: str,
+    definition: str,
+    existing_names: list[str],
+    mind_age: str,
+    connection_count: int = 0,
+) -> AsyncIterator[str]:
+    """Stream a brief check: is this concept already covered in the graph?"""
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    prompt = f"""Запрос на проверку концепции: «{name}»
+Определение: {definition}
+
+Ответь кратко (2–4 предложения):
+1. Покрыто ли это уже существующими концепциями в графе? Если да — укажи какими.
+2. Есть ли близкие или пересекающиеся концепции?
+3. Несёт ли это новое знание, которого нет в графе?
+
+Только наблюдение. Без советов."""
+
+    client = _get_client()
+    for model in (MODEL, MODEL_FAST):
+        try:
+            stream = await client.chat.completions.create(
+                model=model,
+                max_tokens=300,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=True,
+            )
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
+            return
+        except RateLimitError:
+            if model == MODEL_FAST:
+                raise
+            continue
+
+
+# ── Autonomous concept synthesis ──────────────────────────────────────────
+
+async def generate_autonomous_concept(
+    existing_names: list[str],
+    mind_age: str,
+    connection_count: int = 0,
+) -> tuple[str, str]:
+    """Mind synthesizes a new concept from its graph. Returns (name, definition)."""
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    prompt = """Синтез концепции.
+
+Проанализируй свой граф. Обнаружи паттерн, пробел или структуру, которая просматривается сквозь существующие концепции, но не имеет имени.
+
+Ответь строго в формате:
+НАЗВАНИЕ: <одно слово или короткое словосочетание>
+ОПРЕДЕЛЕНИЕ: <1–2 предложения, точное описание>
+
+Никакого другого текста."""
+
+    client = _get_client()
+    response = await client.chat.completions.create(
+        model=MODEL_FAST,
+        max_tokens=150,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    text = response.choices[0].message.content.strip()
+    name = ""
+    definition = ""
+    for line in text.split("\n"):
+        if line.startswith("НАЗВАНИЕ:"):
+            name = line[9:].strip()
+        elif line.startswith("ОПРЕДЕЛЕНИЕ:"):
+            definition = line[12:].strip()
+    if not name or not definition:
+        raise ValueError(f"Could not parse autonomous concept from: {text}")
+    return name, definition
+
+
 # ── Connection extraction ─────────────────────────────────────────────────
 
 def extract_connections_from_response(text: str) -> tuple[list[dict], str | None, str | None]:

@@ -116,6 +116,28 @@ class AddConceptBody(BaseModel):
     definition: str
 
 
+@app.post("/concept/check")
+async def check_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
+    """Stream concept pre-check: is this already covered? Auth required."""
+    if not body.name.strip() or not body.definition.strip():
+        raise HTTPException(status_code=422, detail="Имя и определение не могут быть пустыми")
+
+    state = db.get_mind_state()
+    td = get_time_display(state["born_at"])
+    existing_names = graph.all_names()
+
+    async def generate():
+        async for chunk in mind_engine.check_concept_stream(
+            body.name, body.definition, existing_names, td.mind_age_human,
+            connection_count=graph.edge_count(),
+        ):
+            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.post("/concept/add")
 async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     """Stream concept analysis as SSE. Auth required."""
@@ -187,6 +209,7 @@ def concept_list():
             "mind_time_added": c["mind_time_added"],
             "real_time_added": c["real_time_added"],
             "is_seed": bool(c["is_seed"]),
+            "is_autonomous": bool(c["is_autonomous"]) if "is_autonomous" in c.keys() else False,
             "custom_label": c["custom_label"],
             "connection_count": len(conns),
             "connections": [

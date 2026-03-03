@@ -5,7 +5,7 @@
 install: setup
 	@echo ""
 	@echo "✓  IMPLUS installed. Next steps:"
-	@echo "   1. Edit .env  (set MIND_PASSWORD + ANTHROPIC_API_KEY)"
+	@echo "   1. Edit .env  (set MIND_PASSWORD + GROQ_API_KEY)"
 	@echo "   2. make backend    (Terminal 1)"
 	@echo "   3. make frontend   (Terminal 2)"
 	@echo "   4. Open http://localhost:5173"
@@ -45,8 +45,8 @@ dev: check-env
 
 check-env:
 	@[ -f .env ] || (echo "✗  .env not found. Run: make setup"; exit 1)
-	@grep -q "^ANTHROPIC_API_KEY=sk-" .env 2>/dev/null || \
-	    (echo "✗  Set ANTHROPIC_API_KEY in .env"; exit 1)
+	@grep -q "^GROQ_API_KEY=gsk_" .env 2>/dev/null || \
+	    (echo "✗  Set GROQ_API_KEY in .env"; exit 1)
 	@grep -q "^MIND_PASSWORD=" .env 2>/dev/null || \
 	    (echo "✗  Set MIND_PASSWORD in .env"; exit 1)
 

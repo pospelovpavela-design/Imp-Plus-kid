@@ -32,9 +32,14 @@ export default function NodeDetail({ node, onClose }: Props) {
       {/* Header */}
       <div className="flex items-start justify-between p-3 border-b border-border shrink-0">
         <div>
-          <div className="text-text-bright font-bold text-sm">
+          <div className={`font-bold text-sm ${node.is_autonomous ? 'text-gold' : 'text-text-bright'}`}>
             {node.name}
-            {node.is_seed && (
+            {node.is_autonomous && (
+              <span className="ml-2 text-gold text-[10px] border border-gold/40 px-1">
+                ✦ СИНТЕЗ
+              </span>
+            )}
+            {node.is_seed && !node.is_autonomous && (
               <span className="ml-2 text-seed-color text-[10px] border border-seed-color/40 px-1">
                 SEED
               </span>

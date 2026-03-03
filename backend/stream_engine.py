@@ -28,13 +28,20 @@ _reached_milestones: set[str] = set()
 _born_at: float = 0.0
 _concept_graph: Any = None
 
+# Autonomous concept creation — once per 24 real hours
+_last_autonomous_time: float = 0.0
+AUTONOMOUS_INTERVAL = 86400  # seconds
+
 
 def init(born_at: float, concept_graph: Any) -> None:
-    global _born_at, _concept_graph, _reached_milestones
+    global _born_at, _concept_graph, _reached_milestones, _last_autonomous_time
     _born_at = born_at
     _concept_graph = concept_graph
     for row in db.list_milestones():
         _reached_milestones.add(row["milestone_key"])
+    last_auto = db.get_last_autonomous_time()
+    if last_auto is not None:
+        _last_autonomous_time = last_auto
 
 
 def subscribe() -> asyncio.Queue:
@@ -101,6 +108,64 @@ async def _check_milestones() -> None:
         logger.info("Milestone reached: %s", key)
 
 
+async def _maybe_create_autonomous_concept() -> None:
+    """Create one autonomous concept per day if enough concepts exist."""
+    global _last_autonomous_time
+    now = time.time()
+    if now - _last_autonomous_time < AUTONOMOUS_INTERVAL:
+        return
+    if _concept_graph.node_count() < 3:
+        return
+
+    td = get_time_display(_born_at)
+    names = _concept_graph.all_names()
+    try:
+        name, definition = await mind_engine.generate_autonomous_concept(
+            names, td.mind_age_human,
+            connection_count=_concept_graph.edge_count(),
+        )
+        if db.concept_exists(name):
+            _last_autonomous_time = now
+            return
+
+        cid = _concept_graph.add_concept(
+            name, definition, td.mind_display, now, is_autonomous=True
+        )
+
+        # Analyze to build connections (collect full text, no streaming needed)
+        full_text = ""
+        async for chunk in mind_engine.analyze_concept_stream(
+            name, definition, names, td.mind_age_human,
+            connection_count=_concept_graph.edge_count(),
+        ):
+            full_text += chunk
+
+        _concept_graph.add_processing_log(cid, full_text)
+        connections, custom_label, neologism = mind_engine.extract_connections_from_response(full_text)
+        for conn in connections:
+            other = db.get_concept_by_name(conn.get("concept", ""))
+            if other:
+                _concept_graph.add_connection(
+                    cid, other["id"],
+                    conn.get("relationship", ""),
+                    float(conn.get("strength", 0.5)),
+                )
+        label = custom_label or neologism
+        if label:
+            _concept_graph.set_custom_label(cid, label)
+
+        _last_autonomous_time = now
+        await _save_and_broadcast(
+            "autonomous",
+            f"Разум самостоятельно синтезировал концепцию «{name}»: {definition}",
+            [name],
+        )
+        logger.info("Autonomous concept created: %s", name)
+    except Exception as exc:
+        logger.error("Autonomous concept creation failed: %s", exc)
+        _last_autonomous_time = now  # Prevent rapid retries on error
+
+
 async def spontaneous_loop() -> None:
     """Background coroutine. Runs until cancelled."""
     # Support both new (STREAM_INTERVAL_SECONDS) and legacy (SPONTANEOUS_INTERVAL) var names
@@ -115,6 +180,7 @@ async def spontaneous_loop() -> None:
         await asyncio.sleep(interval)
         try:
             await _check_milestones()
+            await _maybe_create_autonomous_concept()
             pair = _concept_graph.random_two_concepts()
             if pair is None:
                 continue

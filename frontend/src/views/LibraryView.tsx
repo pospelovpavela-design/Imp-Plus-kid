@@ -131,7 +131,7 @@ function ConceptCard({
                   ${isSelected ? 'bg-panel border-l-2 border-l-accent' : 'border-l-2 border-l-transparent'}`}
     >
       <div className="flex items-center justify-between">
-        <span className={`font-medium ${concept.is_seed ? 'text-seed-color' : 'text-text-bright'}`}>
+        <span className={`font-medium ${concept.is_autonomous ? 'text-gold' : concept.is_seed ? 'text-seed-color' : 'text-text-bright'}`}>
           {concept.name}
         </span>
         {concept.custom_label && (
@@ -141,7 +141,8 @@ function ConceptCard({
       <div className="flex gap-3 mt-0.5 text-[10px] text-text-dim">
         <span>{concept.mind_time_added}</span>
         <span>{concept.connection_count} связей</span>
-        {concept.is_seed && <span className="text-seed-color/60">seed</span>}
+        {concept.is_autonomous && <span className="text-gold/80">✦ синтез разума</span>}
+        {concept.is_seed && !concept.is_autonomous && <span className="text-seed-color/60">seed</span>}
       </div>
     </button>
   )
@@ -154,9 +155,14 @@ function ConceptDetail({ concept }: { concept: Concept }) {
     <div className="space-y-5 max-w-2xl text-xs">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-bold text-text-bright flex items-center gap-3">
+        <h2 className={`text-xl font-bold flex items-center gap-3 ${concept.is_autonomous ? 'text-gold' : 'text-text-bright'}`}>
           {concept.name}
-          {concept.is_seed && (
+          {concept.is_autonomous && (
+            <span className="text-xs text-gold border border-gold/40 px-2 py-0.5">
+              ✦ СИНТЕЗ РАЗУМА
+            </span>
+          )}
+          {concept.is_seed && !concept.is_autonomous && (
             <span className="text-xs text-seed-color border border-seed-color/40 px-2 py-0.5">
               ИСХОДНАЯ
             </span>

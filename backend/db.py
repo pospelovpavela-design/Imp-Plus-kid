@@ -38,7 +38,8 @@ def init_db() -> None:
                 mind_time_added  TEXT    NOT NULL,
                 real_time_added  REAL    NOT NULL,
                 custom_label     TEXT,
-                is_seed          INTEGER NOT NULL DEFAULT 0
+                is_seed          INTEGER NOT NULL DEFAULT 0,
+                is_autonomous    INTEGER NOT NULL DEFAULT 0
             );
 
             -- Graph edges between concepts
@@ -88,6 +89,15 @@ def init_db() -> None:
             );
         """)
         conn.commit()
+    # Safe migration: add is_autonomous column for existing databases
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "ALTER TABLE concepts ADD COLUMN is_autonomous INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+    except Exception:
+        pass  # Column already exists — ok
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -107,13 +117,15 @@ def create_mind_state(born_at: float, name: str) -> None:
 
 
 def insert_concept(name: str, definition: str, mind_time: str,
-                   real_time: float, is_seed: bool = False) -> int:
+                   real_time: float, is_seed: bool = False,
+                   is_autonomous: bool = False) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO concepts
-               (name, definition, mind_time_added, real_time_added, is_seed)
-               VALUES (?, ?, ?, ?, ?)""",
-            (name, definition, mind_time, real_time, 1 if is_seed else 0),
+               (name, definition, mind_time_added, real_time_added, is_seed, is_autonomous)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (name, definition, mind_time, real_time,
+             1 if is_seed else 0, 1 if is_autonomous else 0),
         )
         conn.commit()
         return cur.lastrowid
@@ -271,3 +283,12 @@ def update_concept_label(concept_id: int, label: str) -> None:
             "UPDATE concepts SET custom_label=? WHERE id=?", (label, concept_id)
         )
         conn.commit()
+
+
+def get_last_autonomous_time() -> float | None:
+    """Return real_time_added of the most recently created autonomous concept, or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT MAX(real_time_added) as t FROM concepts WHERE is_autonomous=1"
+        ).fetchone()
+        return float(row["t"]) if row and row["t"] is not None else None

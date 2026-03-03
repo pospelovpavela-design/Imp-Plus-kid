@@ -37,6 +37,7 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
     (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const label = node.custom_label || node.name
       const isSeed = node.is_seed
+      const isAutonomous = node.is_autonomous
       const isHighlighted = highlightIds?.has(node.id)
       const degree = node.degree || 1
 
@@ -46,11 +47,15 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
       ctx.beginPath()
       ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI)
 
-      // spec colours: node-default #1e3a6e, node-seed #2d5a9e, node-active #4a7fff
+      // spec colours: node-default #1e3a6e, node-seed #2d5a9e, node-active #4a7fff, autonomous gold
       if (isHighlighted) {
         ctx.fillStyle = '#4a7fff'
         ctx.shadowColor = '#4a7fff'
         ctx.shadowBlur = 18
+      } else if (isAutonomous) {
+        ctx.fillStyle = '#6a4e00'
+        ctx.shadowColor = '#c8a84b'
+        ctx.shadowBlur = 16
       } else if (isSeed) {
         ctx.fillStyle = '#2d5a9e'
         ctx.shadowColor = '#3d7fff'
@@ -69,7 +74,7 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
         ctx.font = `${fontSize}px 'JetBrains Mono', monospace`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
-        ctx.fillStyle = isHighlighted ? '#dde0f0' : isSeed ? '#9bb3ff' : '#7880a0'
+        ctx.fillStyle = isHighlighted ? '#dde0f0' : isAutonomous ? '#c8a84b' : isSeed ? '#9bb3ff' : '#7880a0'
         ctx.fillText(label.length > 14 ? label.slice(0, 13) + '…' : label,
                      node.x, node.y + radius + 2)
       }

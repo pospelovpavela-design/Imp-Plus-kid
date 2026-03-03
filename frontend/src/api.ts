@@ -95,6 +95,27 @@ export async function addConceptStream(
   return readSSEStream(res, onChunk)
 }
 
+/**
+ * Check if a concept is already covered in the graph (streaming).
+ * onChunk: called with each text chunk.
+ */
+export async function checkConceptStream(
+  name: string,
+  definition: string,
+  onChunk: (text: string) => void,
+): Promise<void> {
+  const res = await fetch(`${BASE}/concept/check`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ name, definition }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || res.statusText)
+  }
+  await readSSEStream(res, onChunk)
+}
+
 // ── Contemplation ───────────────────────────────────────────────────────────
 
 export async function contemplateStream(

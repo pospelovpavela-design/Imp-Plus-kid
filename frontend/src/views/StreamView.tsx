@@ -14,14 +14,22 @@ interface Props {
 
 export default function StreamView({ graphData, initialEvents, token, onGraphUpdate }: Props) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
+  const [feedExpanded, setFeedExpanded] = useState(false)
 
   return (
     <div className="flex flex-col md:flex-row h-full overflow-hidden">
       {/* Left panel — clock + feed */}
-      <div className="md:w-[40%] w-full h-[48vh] md:h-full flex flex-col border-b md:border-b-0 md:border-r border-border overflow-hidden">
-        {/* Clock */}
-        <div className="p-4 border-b border-border shrink-0">
+      <div className={`md:w-[40%] w-full flex flex-col border-b md:border-b-0 md:border-r border-border overflow-hidden transition-all duration-300
+                       ${feedExpanded ? 'flex-1 md:h-full' : 'h-[48vh] md:h-full'}`}>
+        {/* Clock + expand toggle (mobile only) */}
+        <div className="p-4 border-b border-border shrink-0 flex items-start justify-between">
           <MindClock />
+          <button
+            onClick={() => setFeedExpanded(!feedExpanded)}
+            className="md:hidden ml-3 shrink-0 text-text-dim/60 hover:text-accent border border-border px-2 py-1 text-[10px] uppercase tracking-widest transition-colors"
+          >
+            {feedExpanded ? '↓ свернуть' : '↑ развернуть'}
+          </button>
         </div>
 
         {/* Stats */}
@@ -36,8 +44,8 @@ export default function StreamView({ graphData, initialEvents, token, onGraphUpd
         </div>
       </div>
 
-      {/* Right panel — concept graph (60%) */}
-      <div className="flex-1 relative overflow-hidden bg-void">
+      {/* Right panel — concept graph (60%), hidden on mobile when feed expanded */}
+      <div className={`flex-1 relative overflow-hidden bg-void ${feedExpanded ? 'hidden md:block' : 'block'}`}>
         <div className="absolute inset-0">
           <ConceptGraph
             data={graphData}

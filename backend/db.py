@@ -87,6 +87,17 @@ def init_db() -> None:
                 reached_at_mind  TEXT    NOT NULL,
                 reflection       TEXT
             );
+
+            -- Neologisms coined by the mind
+            CREATE TABLE IF NOT EXISTS neologisms (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                word        TEXT    NOT NULL,
+                explanation TEXT,
+                source      TEXT    NOT NULL,
+                concept_id  INTEGER,
+                mind_time   TEXT    NOT NULL,
+                created_at  REAL    NOT NULL
+            );
         """)
         conn.commit()
     # Safe migration: add is_autonomous column for existing databases
@@ -283,6 +294,26 @@ def update_concept_label(concept_id: int, label: str) -> None:
             "UPDATE concepts SET custom_label=? WHERE id=?", (label, concept_id)
         )
         conn.commit()
+
+
+def insert_neologism(word: str, explanation: str, source: str,
+                     concept_id: int | None, mind_time: str, created_at: float) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO neologisms (word, explanation, source, concept_id, mind_time, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (word, explanation, source, concept_id, mind_time, created_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_neologisms(limit: int = 100, offset: int = 0) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM neologisms ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
 
 
 def get_last_autonomous_time() -> float | None:

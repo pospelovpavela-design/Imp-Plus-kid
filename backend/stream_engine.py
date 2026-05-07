@@ -9,6 +9,7 @@ Responsibilities:
 import asyncio
 import json
 import os
+import re
 import time
 import logging
 from typing import Any
@@ -153,6 +154,9 @@ async def _maybe_create_autonomous_concept() -> None:
         label = custom_label or neologism
         if label:
             _concept_graph.set_custom_label(cid, label)
+        if neologism:
+            db.insert_neologism(neologism, full_text[:300], "autonomous", cid,
+                                td.mind_display, time.time())
 
         _last_autonomous_time = now
         await _save_and_broadcast(
@@ -191,7 +195,48 @@ async def spontaneous_loop() -> None:
                 a, b, names, td.mind_age_human,
                 connection_count=_concept_graph.edge_count(),
             )
-            await _save_and_broadcast("spontaneous", thought, [a["name"], b["name"]])
+
+            # Apply connections found in this spontaneous thought to the graph
+            connections, _label, neologism = mind_engine.extract_connections_from_response(thought)
+            if neologism:
+                db.insert_neologism(neologism, thought[:300], "spontaneous", None,
+                                    td.mind_display, time.time())
+            applied = 0
+            if connections:
+                for conn in connections:
+                    rel = conn.get("relationship", "")
+                    strength = float(conn.get("strength", 0))
+                    # Skip unfilled template values
+                    if rel in ("link", "<тип связи>", "") or strength <= 0.0:
+                        continue
+                    other = db.get_concept_by_name(conn.get("concept", ""))
+                    if other and other["id"] != a["id"]:
+                        _concept_graph.add_connection(
+                            a["id"], other["id"],
+                            rel,
+                            strength,
+                        )
+                        applied += 1
+            # Fallback: if LLM gave no parseable JSON, connect A↔B directly
+            if applied == 0:
+                b_row = db.get_concept_by_name(b["name"])
+                if b_row and b_row["id"] != a["id"]:
+                    _concept_graph.add_connection(
+                        a["id"], b_row["id"],
+                        "спонтанная связь",
+                        0.3,
+                    )
+                    applied += 1
+            logger.info("Spontaneous thought: %s↔%s, edges applied: %d", a["name"], b["name"], applied)
+
+            # Strip JSON before broadcasting — handles both ```json...``` and raw objects
+            clean_thought = re.sub(r"```json[\s\S]*?```", "", thought, flags=re.DOTALL)
+            # Strip raw JSON objects with up to 2 levels of nesting ({...{...}...})
+            clean_thought = re.sub(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', "", clean_thought)
+            # Strip leftover "JSON:" / "JSON" markers
+            clean_thought = re.sub(r'(?i)\bJSON[:\s]*', "", clean_thought)
+            clean_thought = clean_thought.strip()
+            await _save_and_broadcast("spontaneous", clean_thought, [a["name"], b["name"]])
         except Exception as exc:
             logger.error("Spontaneous loop error: %s", exc)
 

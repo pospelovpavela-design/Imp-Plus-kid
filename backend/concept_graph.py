@@ -85,7 +85,7 @@ class ConceptGraph:
         return self.g.number_of_edges()
 
     def all_names(self) -> list[str]:
-        return [self.g.nodes[n]["name"] for n in self.g.nodes]
+        return [self.g.nodes[n]["name"] for n in self.g.nodes if "name" in self.g.nodes[n]]
 
     def get_node_data(self, concept_id: int) -> dict | None:
         if concept_id not in self.g.nodes:
@@ -113,6 +113,8 @@ class ConceptGraph:
         nodes = []
         for nid in self.g.nodes:
             nd = self.g.nodes[nid]
+            if "name" not in nd:
+                continue
             nodes.append({
                 "id": nid,
                 "name": nd["name"],
@@ -163,16 +165,23 @@ class ConceptGraph:
             self.g.nodes[concept_id]["custom_label"] = label
 
     def random_two_concepts(self) -> tuple[dict, dict] | None:
-        """Pick two random connected (or any) concepts for spontaneous reflection."""
-        nodes = list(self.g.nodes)
+        """Pick two random concepts for spontaneous reflection.
+
+        Uses inverse-degree weighting so rarely-connected concepts appear more
+        often than hubs. Prefers non-connected pairs (more interesting), with
+        up to 15 retries before falling back to any distinct pair.
+        """
+        nodes = [n for n in self.g.nodes if "name" in self.g.nodes[n]]
         if len(nodes) < 2:
             return None
         import random
-        # Prefer pairs that are NOT directly connected (more interesting)
-        non_connected = [(a, b) for a, b in
-                         nx.non_edges(self.g) if a in self.g and b in self.g]
-        if non_connected:
-            a, b = random.choice(non_connected[:50])  # cap for perf
-        else:
-            a, b = random.sample(nodes, 2)
+        # Weight: concepts with fewer connections are chosen more often
+        max_deg = max(self.g.degree(n) for n in nodes)
+        weights = [max_deg - self.g.degree(n) + 1 for n in nodes]
+        for _ in range(15):
+            a, b = random.choices(nodes, weights=weights, k=2)
+            if a != b and not self.g.has_edge(a, b):
+                return self.g.nodes[a] | {"id": a}, self.g.nodes[b] | {"id": b}
+        # Fallback: any two distinct nodes
+        a, b = random.sample(nodes, 2)
         return self.g.nodes[a] | {"id": a}, self.g.nodes[b] | {"id": b}

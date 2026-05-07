@@ -145,7 +145,18 @@ async def contemplate_stream(
 [ДА / НЕТ / ЧАСТИЧНО + одно предложение-обоснование.]
 
 ══ ГОЛОС РАЗУМА ═══════════════════════════════════════════════
-[2–3 точных предложения от первого лица. Только наблюдение.]"""
+[2–3 точных предложения от первого лица. Только наблюдение.]
+
+В конце — JSON блок строго:
+```json
+{{
+  "connections": [
+    {{"concept": "<имя из графа>", "relationship": "<тип>", "strength": 0.0}}
+  ],
+  "custom_label": null,
+  "neologism": "<новое слово из секции НОВОЕ СЛОВО или null>"
+}}
+```"""
 
     client = _get_client()
     for model in (MODEL, MODEL_FAST):
@@ -180,14 +191,27 @@ async def generate_spontaneous(
     connection_count: int = 0,
 ) -> str:
     system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    names_str = ", ".join(existing_names[:20]) if existing_names else "(пусто)"
     prompt = f"""Спонтанное размышление.
-Две концепции: «{concept_a["name"]}» и «{concept_b["name"]}».
-1–3 коротких предложения: связь, различие, или противоречие. Только наблюдение."""
+Два концепта: «{concept_a["name"]}» и «{concept_b["name"]}».
+1–3 предложения: связь, различие или противоречие. Только наблюдение.
+
+В конце — JSON строго в этом формате:
+```json
+{{
+  "connections": [
+    {{"concept": "имя_из_списка", "relationship": "тип_связи", "strength": 0.7}}
+  ],
+  "custom_label": null,
+  "neologism": null
+}}
+```
+strength: 0.1–1.0. Имена только из: {names_str}"""
 
     client = _get_client()
     response = await client.chat.completions.create(
         model=MODEL_FAST,
-        max_tokens=200,
+        max_tokens=500,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
@@ -298,10 +322,23 @@ async def generate_autonomous_concept(
     name = ""
     definition = ""
     for line in text.split("\n"):
-        if line.startswith("НАЗВАНИЕ:"):
-            name = line[9:].strip()
-        elif line.startswith("ОПРЕДЕЛЕНИЕ:"):
-            definition = line[12:].strip()
+        line = line.strip()
+        if not line:
+            continue
+        if re.match(r"^НАЗВАНИЕ\s*[:：]", line):
+            name = re.sub(r"^НАЗВАНИЕ\s*[:：]\s*", "", line).strip()
+        elif re.match(r"^ОПРЕДЕЛЕНИЕ\s*[:：]", line):
+            definition = re.sub(r"^ОПРЕДЕЛЕНИЕ\s*[:：]\s*", "", line).strip()
+    # Fallback: if format ignored — treat first non-empty line as name, second as definition
+    if not name or not definition:
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        if len(lines) >= 2:
+            # Strip any "WORD:" prefix the model might have used
+            name = re.sub(r"^[А-ЯA-Z][А-ЯA-Z\-]+\s*[:：]\s*", "", lines[0]).strip() or lines[0]
+            definition = re.sub(r"^[А-ЯA-Z][А-ЯA-Z\-]+\s*[:：]\s*", "", lines[1]).strip() or lines[1]
+        elif lines:
+            name = lines[0]
+            definition = lines[0]
     if not name or not definition:
         raise ValueError(f"Could not parse autonomous concept from: {text}")
     return name, definition
@@ -315,10 +352,18 @@ def extract_connections_from_response(text: str) -> tuple[list[dict], str | None
         return [], None, None
     try:
         data = json.loads(match.group(1))
-        return (
-            data.get("connections", []),
-            data.get("custom_label") or None,
-            data.get("neologism") or None,
-        )
+        connections = data.get("connections", [])
+        if not isinstance(connections, list):
+            connections = []
+        custom_label = data.get("custom_label") or None
+        if isinstance(custom_label, list):
+            custom_label = custom_label[0] if custom_label else None
+        neologism = data.get("neologism") or None
+        if isinstance(neologism, list):
+            neologism = neologism[0] if neologism else None
+        # Reject placeholder values the model sometimes returns verbatim
+        if neologism in ("null", "none", "нет", "не нужно", "не требуется"):
+            neologism = None
+        return connections, custom_label, neologism
     except (json.JSONDecodeError, KeyError):
         return [], None, None

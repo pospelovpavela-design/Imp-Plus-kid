@@ -176,6 +176,9 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
         label = custom_label or neologism
         if label:
             graph.set_custom_label(cid, label)
+        if neologism:
+            db.insert_neologism(neologism, full_text[:300], "concept_add", cid,
+                                td.mind_display, time.time())
 
         asyncio.create_task(
             stream_engine.push_reaction(
@@ -256,6 +259,10 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
 
         db.insert_contemplation(body.thought, full_text, td.mind_display, time.time())
+        _, _, neologism = mind_engine.extract_connections_from_response(full_text)
+        if neologism:
+            db.insert_neologism(neologism, full_text[:300], "contemplation", None,
+                                td.mind_display, time.time())
         asyncio.create_task(stream_engine.push_contemplation(full_text[:300]))
         yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
 
@@ -344,6 +351,14 @@ def history_stream(
         }
         for r in rows
     ]
+
+
+@app.get("/neologisms")
+def get_neologisms(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    return [dict(r) for r in db.list_neologisms(limit, offset)]
 
 
 @app.get("/history/contemplations")

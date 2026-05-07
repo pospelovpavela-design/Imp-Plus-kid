@@ -35,7 +35,7 @@ export default function ConceptGraph({ data, onNodeClick, highlightIds }: Props)
 
   const nodeCanvasObject = useCallback(
     (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      const label = node.custom_label || node.name
+      const label = node.name
       const isSeed = node.is_seed
       const isAutonomous = node.is_autonomous
       const isHighlighted = highlightIds?.has(node.id)

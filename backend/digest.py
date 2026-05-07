@@ -98,12 +98,29 @@ def generate_summary(concepts, events, mind_age, n_concepts, n_edges) -> str:
     resp = httpx.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-        json={"model": MODEL, "max_tokens": 300,
+        json={"model": MODEL, "max_tokens": 500,
               "messages": [{"role": "user", "content": prompt}]},
         timeout=30,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip()
+
+
+def truncate(text: str, limit: int) -> str:
+    """Truncate at sentence end if possible, otherwise at word boundary."""
+    if len(text) <= limit:
+        return text
+    chunk = text[:limit]
+    # try to end at sentence boundary
+    for sep in ('. ', '! ', '? ', '.\n'):
+        pos = chunk.rfind(sep)
+        if pos > limit // 2:
+            return chunk[:pos + 1]
+    # fall back to word boundary
+    pos = chunk.rfind(' ')
+    if pos > limit // 2:
+        return chunk[:pos] + '…'
+    return chunk + '…'
 
 
 def format_message(concepts, events, mind_age, n_concepts, n_edges, summary) -> str:
@@ -115,7 +132,7 @@ def format_message(concepts, events, mind_age, n_concepts, n_edges, summary) -> 
     if concepts:
         lines.append("📚 *Новые концепции:*")
         for c in concepts:
-            defn = c['definition'][:60] + ("…" if len(c['definition']) > 60 else "")
+            defn = truncate(c['definition'], 120)
             lines.append(f"• *{c['name']}* — {defn}")
         lines.append("")
 
@@ -127,7 +144,7 @@ def format_message(concepts, events, mind_age, n_concepts, n_edges, summary) -> 
         lines.append("📡 *События:*")
         for e in shown_events:
             icon = type_icons.get(e["type"], "·")
-            text = e["content"][:100] + ("…" if len(e["content"]) > 100 else "")
+            text = truncate(e["content"], 200)
             lines.append(f"{icon} {text}")
         lines.append("")
 

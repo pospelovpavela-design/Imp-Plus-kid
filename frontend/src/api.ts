@@ -1,4 +1,4 @@
-import type { TimeData, Concept, GraphData, ThoughtEvent, MindState, Milestone } from './types'
+import type { TimeData, Concept, GraphData, ThoughtEvent, MindState, Milestone, GroundingExcerpt } from './types'
 
 const BASE = ''  // proxied by Vite
 
@@ -71,6 +71,29 @@ export async function fetchConcepts(): Promise<Concept[]> {
 export async function fetchConcept(id: number): Promise<Concept> {
   const res = await fetch(`${BASE}/concept/${id}`, { headers: authHeaders() })
   return handleResponse<Concept>(res)
+}
+
+export async function fetchGroundingExcerpts(limit = 100, offset = 0): Promise<GroundingExcerpt[]> {
+  const res = await fetch(`${BASE}/grounding/excerpts?limit=${limit}&offset=${offset}`, {
+    headers: authHeaders(),
+  })
+  return handleResponse<GroundingExcerpt[]>(res)
+}
+
+export async function addGroundingExcerpt(input: {
+  title: string
+  excerpt: string
+  author?: string
+  source?: string
+  concept_names: string[]
+  note?: string
+}): Promise<{ id: number; title: string; concept_names: string[] }> {
+  const res = await fetch(`${BASE}/grounding/excerpt`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(input),
+  })
+  return handleResponse<{ id: number; title: string; concept_names: string[] }>(res)
 }
 
 /**

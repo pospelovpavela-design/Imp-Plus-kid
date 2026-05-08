@@ -57,11 +57,11 @@ export default function StreamView({ graphData, initialEvents, token, onGraphUpd
         {/* Legend — spec colours */}
         <div className="absolute top-3 left-3 text-[10px] text-text-dim space-y-1 pointer-events-none bg-void/70 px-2 py-1.5 border border-border/30">
           <div className="flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: '#4a2a7f' }} />
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: '#2d5a9e' }} />
             семенные концепции
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: '#2a4a7f' }} />
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: '#1e3a6e' }} />
             добавленные
           </div>
           <div className="flex items-center gap-1.5">
@@ -71,6 +71,14 @@ export default function StreamView({ graphData, initialEvents, token, onGraphUpd
           <div className="flex items-center gap-1.5">
             <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: '#7ab3ff' }} />
             выбранная
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-full border border-gold" style={{ background: 'transparent' }} />
+            есть основание опыта
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-5 h-1 rounded bg-teal" />
+            локальное влияние
           </div>
         </div>
 

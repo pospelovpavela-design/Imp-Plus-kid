@@ -58,6 +58,25 @@ def unsubscribe(q: asyncio.Queue) -> None:
         pass
 
 
+def _build_grounding_context(names: list[str], limit: int = 6) -> str:
+    rows = db.find_groundings_for_concept_names(names, limit=limit)
+    if not rows:
+        return ""
+    parts = []
+    for row in rows:
+        author = f"{row['author']}. " if row["author"] else ""
+        source = f" Источник: {row['source']}." if row["source"] else ""
+        note = f" Привязка: {row['note']}." if row["note"] else ""
+        excerpt = row["excerpt"].strip().replace("\n", " ")
+        if len(excerpt) > 700:
+            excerpt = excerpt[:697].rstrip() + "..."
+        parts.append(
+            f"- Концепция «{row['concept_name']}»: {author}{row['title']}.{source}{note} "
+            f"Фрагмент: «{excerpt}»"
+        )
+    return "\n".join(parts)
+
+
 async def broadcast(event: dict) -> None:
     msg = json.dumps(event, ensure_ascii=False)
     dead = []
@@ -97,9 +116,11 @@ async def _check_milestones() -> None:
         _reached_milestones.add(key)
         names = _concept_graph.all_names()
         try:
+            grounding_context = _build_grounding_context(names)
             reflection = await mind_engine.generate_milestone_reflection(
                 label, names, td.mind_age_human,
                 connection_count=n_edges,
+                grounding_context=grounding_context,
             )
         except Exception as exc:
             logger.error("Milestone reflection failed: %s", exc)
@@ -121,9 +142,11 @@ async def _maybe_create_autonomous_concept() -> None:
     td = get_time_display(_born_at)
     names = _concept_graph.all_names()
     try:
+        grounding_context = _build_grounding_context(names)
         name, definition = await mind_engine.generate_autonomous_concept(
             names, td.mind_age_human,
             connection_count=_concept_graph.edge_count(),
+            grounding_context=grounding_context,
         )
         if db.concept_exists(name):
             _last_autonomous_time = now
@@ -138,6 +161,7 @@ async def _maybe_create_autonomous_concept() -> None:
         async for chunk in mind_engine.analyze_concept_stream(
             name, definition, names, td.mind_age_human,
             connection_count=_concept_graph.edge_count(),
+            grounding_context=grounding_context,
         ):
             full_text += chunk
 
@@ -194,6 +218,7 @@ async def spontaneous_loop() -> None:
             thought = await mind_engine.generate_spontaneous(
                 a, b, names, td.mind_age_human,
                 connection_count=_concept_graph.edge_count(),
+                grounding_context=_build_grounding_context([a["name"], b["name"]]),
             )
 
             # Apply connections found in this spontaneous thought to the graph

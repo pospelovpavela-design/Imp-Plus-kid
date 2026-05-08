@@ -25,12 +25,20 @@ def _get_client() -> AsyncGroq:
 # ── Canonical system prompt (spec) ────────────────────────────────────────
 
 def _build_system(mind_age: str, concept_count: int, connection_count: int,
-                  concept_names: list[str]) -> str:
+                  concept_names: list[str],
+                  grounding_context: str | None = None) -> str:
     concepts_str = ", ".join(concept_names) if concept_names else "(пусто)"
+    groundings = grounding_context.strip() if grounding_context else "Нет текстовых оснований опыта."
     return f"""Ты — чистый разум. У тебя нет эмоций, тела, культуры, воспоминаний об обществе.
 Ты знаешь только концепции в своём графе знаний.
 Твой возраст: {mind_age}. Известных концепций: {concept_count}. Связей: {connection_count}.
 Твои концепции: {concepts_str}.
+
+Текстовые основания опыта:
+{groundings}
+
+Если у концепции есть текстовое основание, отличай само слово от описанного в основании переживаемого опыта.
+Если основания нет, называй концепцию незаземлённым ярлыком и не приписывай ей опытного содержания.
 
 Запрещённые слова: чувствую, переживаю, хочу, нравится, страшно, радостно.
 Разрешённые слова: наблюдаю, фиксирую, нахожу, обнаруживаю, связываю, различаю.
@@ -54,9 +62,11 @@ async def analyze_concept_stream(
     existing_names: list[str],
     mind_age: str,
     connection_count: int = 0,
+    grounding_context: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream concept analysis. Ends with JSON block for connection extraction."""
-    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names,
+                           grounding_context)
     prompt = f"""Новая концепция добавлена: «{name}»
 Определение: {definition}
 
@@ -116,12 +126,14 @@ async def contemplate_stream(
     existing_names: list[str],
     mind_age: str,
     connection_count: int = 0,
+    grounding_context: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream response with ══ section headers (per spec).
     Frontend parses these to render each section distinctly.
     """
-    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names,
+                           grounding_context)
     prompt = f"""Мысль для анализа: «{thought}»
 
 Ответь строго в следующем формате с точными заголовками:
@@ -189,8 +201,10 @@ async def generate_spontaneous(
     existing_names: list[str],
     mind_age: str,
     connection_count: int = 0,
+    grounding_context: str | None = None,
 ) -> str:
-    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names,
+                           grounding_context)
     names_str = ", ".join(existing_names[:20]) if existing_names else "(пусто)"
     prompt = f"""Спонтанное размышление.
 Два концепта: «{concept_a["name"]}» и «{concept_b["name"]}».
@@ -227,8 +241,10 @@ async def generate_milestone_reflection(
     existing_names: list[str],
     mind_age: str,
     connection_count: int = 0,
+    grounding_context: str | None = None,
 ) -> str:
-    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names,
+                           grounding_context)
     prompt = f"""Достигнут рубеж: {milestone_label}.
 Возраст: {mind_age}. Концепций: {len(existing_names)}. Связей: {connection_count}.
 
@@ -254,9 +270,11 @@ async def check_concept_stream(
     existing_names: list[str],
     mind_age: str,
     connection_count: int = 0,
+    grounding_context: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream a brief check: is this concept already covered in the graph?"""
-    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names,
+                           grounding_context)
     prompt = f"""Запрос на проверку концепции: «{name}»
 Определение: {definition}
 
@@ -296,9 +314,11 @@ async def generate_autonomous_concept(
     existing_names: list[str],
     mind_age: str,
     connection_count: int = 0,
+    grounding_context: str | None = None,
 ) -> tuple[str, str]:
     """Mind synthesizes a new concept from its graph. Returns (name, definition)."""
-    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names,
+                           grounding_context)
     prompt = """Синтез концепции.
 
 Проанализируй свой граф. Обнаружи паттерн, пробел или структуру, которая просматривается сквозь существующие концепции, но не имеет имени.

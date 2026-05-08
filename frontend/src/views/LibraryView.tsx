@@ -184,7 +184,29 @@ function ConceptDetail({ concept }: { concept: Concept }) {
       <div className="flex gap-6">
         <Stat label="Связей" value={concept.connection_count} />
         <Stat label="Записей" value={concept.processing_logs?.length || 0} />
+        <Stat label="Оснований" value={concept.groundings?.length || 0} />
       </div>
+
+      {/* Grounding excerpts */}
+      {concept.groundings?.length > 0 && (
+        <div>
+          <div className="text-text-dim uppercase tracking-widest text-[10px] mb-2">Текстовые основания опыта</div>
+          <div className="space-y-2">
+            {concept.groundings.map((g) => (
+              <div key={g.id} className="border-l-2 border-gold/50 pl-3 py-1">
+                <div className="text-gold font-medium">
+                  {g.author ? `${g.author}. ` : ''}{g.title}
+                </div>
+                {g.note && <div className="text-text-dim mt-0.5">{g.note}</div>}
+                <div className="text-text/80 leading-relaxed mt-1 whitespace-pre-wrap">
+                  {g.excerpt}
+                </div>
+                {g.source && <div className="text-text-dim/70 mt-1">{g.source}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Connections */}
       {concept.connections?.length > 0 && (

@@ -29,6 +29,17 @@ class ConceptConnectionOut(BaseModel):
     strength: float
 
 
+class GroundingExcerptOut(BaseModel):
+    id: int
+    title: str
+    author: Optional[str]
+    source: Optional[str]
+    excerpt: str
+    note: Optional[str]
+    mind_time: str
+    created_at: float
+
+
 class ConceptOut(BaseModel):
     id: int
     name: str
@@ -39,6 +50,7 @@ class ConceptOut(BaseModel):
     custom_label: Optional[str]
     connection_count: int
     connections: list[ConceptConnectionOut]
+    groundings: list[GroundingExcerptOut] = []
     processing_logs: list[dict]
 
 
@@ -80,6 +92,7 @@ class GraphNode(BaseModel):
     is_seed: bool
     mind_time_added: str
     degree: int
+    grounding_count: int = 0
     custom_label: Optional[str]
 
 

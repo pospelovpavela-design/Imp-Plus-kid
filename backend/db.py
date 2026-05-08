@@ -98,6 +98,27 @@ def init_db() -> None:
                 mind_time   TEXT    NOT NULL,
                 created_at  REAL    NOT NULL
             );
+
+            -- Textual fragments that ground concepts in described experience
+            CREATE TABLE IF NOT EXISTS grounding_excerpts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT    NOT NULL,
+                author      TEXT,
+                source      TEXT,
+                excerpt     TEXT    NOT NULL,
+                mind_time   TEXT    NOT NULL,
+                created_at  REAL    NOT NULL
+            );
+
+            -- Many-to-many links between concepts and grounding fragments
+            CREATE TABLE IF NOT EXISTS concept_groundings (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                concept_id   INTEGER NOT NULL REFERENCES concepts(id),
+                grounding_id INTEGER NOT NULL REFERENCES grounding_excerpts(id),
+                note         TEXT,
+                created_at   REAL    NOT NULL,
+                UNIQUE(concept_id, grounding_id)
+            );
         """)
         conn.commit()
     # Safe migration: add is_autonomous column for existing databases
@@ -217,6 +238,76 @@ def get_processing_logs(concept_id: int) -> list[sqlite3.Row]:
         return conn.execute(
             "SELECT * FROM processing_logs WHERE concept_id=? ORDER BY created_at",
             (concept_id,),
+        ).fetchall()
+
+
+def insert_grounding_excerpt(title: str, author: str | None, source: str | None,
+                             excerpt: str, mind_time: str, created_at: float) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO grounding_excerpts
+               (title, author, source, excerpt, mind_time, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (title, author, source, excerpt, mind_time, created_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def link_grounding_to_concept(concept_id: int, grounding_id: int,
+                              note: str | None, created_at: float) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO concept_groundings
+               (concept_id, grounding_id, note, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (concept_id, grounding_id, note, created_at),
+        )
+        conn.commit()
+
+
+def get_groundings_for_concept(concept_id: int) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT ge.*, cg.note
+               FROM concept_groundings cg
+               JOIN grounding_excerpts ge ON ge.id = cg.grounding_id
+               WHERE cg.concept_id = ?
+               ORDER BY ge.created_at DESC""",
+            (concept_id,),
+        ).fetchall()
+
+
+def list_groundings(limit: int = 100, offset: int = 0) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT ge.*,
+                      GROUP_CONCAT(c.name, ', ') AS concept_names
+               FROM grounding_excerpts ge
+               LEFT JOIN concept_groundings cg ON cg.grounding_id = ge.id
+               LEFT JOIN concepts c ON c.id = cg.concept_id
+               GROUP BY ge.id
+               ORDER BY ge.created_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+
+
+def find_groundings_for_concept_names(names: list[str], limit: int = 6) -> list[sqlite3.Row]:
+    names = [n for n in names if n]
+    if not names:
+        return []
+    placeholders = ",".join("?" for _ in names)
+    with get_conn() as conn:
+        return conn.execute(
+            f"""SELECT ge.*, cg.note, c.name AS concept_name
+                FROM concept_groundings cg
+                JOIN concepts c ON c.id = cg.concept_id
+                JOIN grounding_excerpts ge ON ge.id = cg.grounding_id
+                WHERE c.name IN ({placeholders})
+                ORDER BY ge.created_at DESC
+                LIMIT ?""",
+            (*names, limit),
         ).fetchall()
 
 

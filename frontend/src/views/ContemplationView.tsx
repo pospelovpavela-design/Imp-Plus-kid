@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { addConceptStream, checkConceptStream, contemplateStream, fetchStreamHistory } from '../api'
+import {
+  addConceptStream,
+  addGroundingExcerpt,
+  checkConceptStream,
+  contemplateStream,
+  fetchStreamHistory,
+} from '../api'
 import type { GraphData, ThoughtEvent } from '../types'
 
-type Mode = 'contemplate' | 'add-concept'
+type Mode = 'contemplate' | 'add-concept' | 'grounding'
 
 interface Props {
   onGraphUpdate: (g: GraphData) => void
@@ -115,6 +121,17 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
   const [checkDone, setCheckDone] = useState(false)
   const checkResponseRef = useRef<HTMLDivElement>(null)
 
+  // ── Grounding mode ─────────────────────────────────────────────────────
+  const [groundingTitle, setGroundingTitle] = useState('')
+  const [groundingAuthor, setGroundingAuthor] = useState('')
+  const [groundingSource, setGroundingSource] = useState('')
+  const [groundingConcepts, setGroundingConcepts] = useState('')
+  const [groundingNote, setGroundingNote] = useState('')
+  const [groundingExcerpt, setGroundingExcerpt] = useState('')
+  const [groundingSaving, setGroundingSaving] = useState(false)
+  const [groundingStatus, setGroundingStatus] = useState('')
+  const [groundingError, setGroundingError] = useState('')
+
   // ── History ─────────────────────────────────────────────────────────────
   const [history, setHistory] = useState<ThoughtEvent[]>([])
   const [showHistory, setShowHistory] = useState(false)
@@ -137,6 +154,11 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
     setAddDone(false)
     setCheckResponse('')
     setCheckDone(false)
+  }
+
+  function resetGroundingStatus() {
+    setGroundingStatus('')
+    setGroundingError('')
   }
 
   async function handleCheck() {
@@ -221,6 +243,37 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
     }
   }
 
+  async function handleAddGrounding() {
+    const conceptNames = groundingConcepts
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (!groundingTitle.trim() || !groundingExcerpt.trim() || conceptNames.length === 0 || groundingSaving) return
+    resetGroundingStatus()
+    setGroundingSaving(true)
+    try {
+      const saved = await addGroundingExcerpt({
+        title: groundingTitle.trim(),
+        author: groundingAuthor.trim() || undefined,
+        source: groundingSource.trim() || undefined,
+        excerpt: groundingExcerpt.trim(),
+        concept_names: conceptNames,
+        note: groundingNote.trim() || undefined,
+      })
+      setGroundingStatus(`Основание добавлено: ${saved.concept_names.join(', ')}`)
+      setGroundingTitle('')
+      setGroundingAuthor('')
+      setGroundingSource('')
+      setGroundingConcepts('')
+      setGroundingNote('')
+      setGroundingExcerpt('')
+    } catch (err: any) {
+      setGroundingError(err.message || 'Ошибка добавления основания')
+    } finally {
+      setGroundingSaving(false)
+    }
+  }
+
   async function loadHistory() {
     setHistoryLoading(true)
     try {
@@ -242,16 +295,16 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                        ${showHistory ? 'hidden md:flex' : 'flex'}`}>
         {/* Mode tabs */}
         <div className="flex gap-1 shrink-0">
-          {(['contemplate', 'add-concept'] as Mode[]).map((m) => (
+          {(['contemplate', 'add-concept', 'grounding'] as Mode[]).map((m) => (
             <button
               key={m}
-              onClick={() => { setMode(m); resetContemplate(); resetAdd() }}
+              onClick={() => { setMode(m); resetContemplate(); resetAdd(); resetGroundingStatus() }}
               className={`px-4 py-2 text-xs uppercase tracking-widest border transition-colors
                 ${mode === m
                   ? 'border-accent text-accent bg-accent/10'
                   : 'border-border text-text-dim hover:border-border-bright'}`}
             >
-              {m === 'contemplate' ? 'Созерцание' : 'Новая концепция'}
+              {m === 'contemplate' ? 'Созерцание' : m === 'add-concept' ? 'Новая концепция' : 'Основание'}
             </button>
           ))}
           <button
@@ -494,6 +547,109 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                 <div className="text-xs">Введите концепцию для интеграции в граф знаний</div>
               </div>
             )}
+          </>
+        )}
+
+        {/* ── GROUNDING mode ──────────────────────────────────────────── */}
+        {mode === 'grounding' && (
+          <>
+            <div className="shrink-0 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-text-dim text-[10px] uppercase tracking-widest block">
+                    Произведение
+                  </label>
+                  <input
+                    type="text"
+                    value={groundingTitle}
+                    onChange={(e) => setGroundingTitle(e.target.value)}
+                    placeholder="Например: Война и мир"
+                    className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
+                               focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-text-dim text-[10px] uppercase tracking-widest block">
+                    Автор
+                  </label>
+                  <input
+                    type="text"
+                    value={groundingAuthor}
+                    onChange={(e) => setGroundingAuthor(e.target.value)}
+                    placeholder="Л. Н. Толстой"
+                    className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
+                               focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-text-dim text-[10px] uppercase tracking-widest block">
+                  Концепции через запятую
+                </label>
+                <input
+                  type="text"
+                  value={groundingConcepts}
+                  onChange={(e) => setGroundingConcepts(e.target.value)}
+                  placeholder="звезда, ночь, расстояние"
+                  className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
+                             focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-text-dim text-[10px] uppercase tracking-widest block">
+                  Фрагмент
+                </label>
+                <textarea
+                  value={groundingExcerpt}
+                  onChange={(e) => setGroundingExcerpt(e.target.value)}
+                  placeholder="Отрывок, где понятие связано с описанием наблюдаемого или проживаемого опыта..."
+                  rows={7}
+                  className="w-full bg-panel border border-border text-text px-4 py-3 text-sm font-mono resize-none
+                             focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  value={groundingSource}
+                  onChange={(e) => setGroundingSource(e.target.value)}
+                  placeholder="Источник / глава / ссылка"
+                  className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
+                             focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
+                />
+                <input
+                  type="text"
+                  value={groundingNote}
+                  onChange={(e) => setGroundingNote(e.target.value)}
+                  placeholder="Краткая привязка к концепциям"
+                  className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
+                             focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
+                />
+              </div>
+              <button
+                onClick={handleAddGrounding}
+                disabled={!groundingTitle.trim() || !groundingExcerpt.trim() || !groundingConcepts.trim() || groundingSaving}
+                className="px-6 py-2 text-xs uppercase tracking-widest border border-gold
+                           text-gold bg-gold/10 hover:bg-gold/20
+                           disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              >
+                {groundingSaving ? 'Сохранение...' : 'Добавить основание'}
+              </button>
+            </div>
+            {groundingStatus && (
+              <div className="shrink-0 text-gold text-xs border border-gold/30 bg-gold/5 px-3 py-2">
+                {groundingStatus}
+              </div>
+            )}
+            {groundingError && (
+              <div className="shrink-0 text-red text-xs border border-red/30 bg-red/5 px-3 py-2">
+                {groundingError}
+              </div>
+            )}
+            <div className="flex-1 flex flex-col items-center justify-center text-text-dim/30 space-y-3">
+              <div className="text-5xl">◌</div>
+              <div className="text-xs">Фрагмент будет использован как основание при последующих размышлениях</div>
+            </div>
           </>
         )}
       </div>

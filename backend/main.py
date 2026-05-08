@@ -116,6 +116,60 @@ class AddConceptBody(BaseModel):
     definition: str
 
 
+class GroundingExcerptBody(BaseModel):
+    title: str
+    excerpt: str
+    author: str | None = None
+    source: str | None = None
+    concept_names: list[str]
+    note: str | None = None
+
+
+def _grounding_row_to_dict(row):
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "author": row["author"],
+        "source": row["source"],
+        "excerpt": row["excerpt"],
+        "note": row["note"] if "note" in row.keys() else None,
+        "mind_time": row["mind_time"],
+        "created_at": row["created_at"],
+        "concept_name": row["concept_name"] if "concept_name" in row.keys() else None,
+        "concept_names": row["concept_names"] if "concept_names" in row.keys() else None,
+    }
+
+
+def _concept_names_in_text(text: str, limit: int = 12) -> list[str]:
+    text_lower = text.lower()
+    found = []
+    for name in graph.all_names():
+        if name.lower() in text_lower:
+            found.append(name)
+            if len(found) >= limit:
+                break
+    return found
+
+
+def _build_grounding_context(names: list[str], limit: int = 6) -> str:
+    rows = db.find_groundings_for_concept_names(names, limit=limit)
+    if not rows:
+        return ""
+    parts = []
+    for row in rows:
+        author = f"{row['author']}. " if row["author"] else ""
+        source = f" Источник: {row['source']}." if row["source"] else ""
+        note = f" Привязка: {row['note']}." if row["note"] else ""
+        excerpt = row["excerpt"].strip().replace("\n", " ")
+        if len(excerpt) > 700:
+            excerpt = excerpt[:697].rstrip() + "..."
+        parts.append(
+            f"- Концепция «{row['concept_name']}»: {author}{row['title']}.{source}{note} "
+            f"Фрагмент: «{excerpt}»"
+        )
+    return "\n".join(parts)
+
+
 @app.post("/concept/check")
 async def check_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     """Stream concept pre-check: is this already covered? Auth required."""
@@ -125,11 +179,15 @@ async def check_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     state = db.get_mind_state()
     td = get_time_display(state["born_at"])
     existing_names = graph.all_names()
+    grounding_context = _build_grounding_context(
+        _concept_names_in_text(f"{body.name} {body.definition}")
+    )
 
     async def generate():
         async for chunk in mind_engine.check_concept_stream(
             body.name, body.definition, existing_names, td.mind_age_human,
             connection_count=graph.edge_count(),
+            grounding_context=grounding_context,
         ):
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
@@ -151,12 +209,16 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     td = get_time_display(born_at)
     existing_names = graph.all_names()
     n_edges = graph.edge_count()
+    grounding_context = _build_grounding_context(
+        _concept_names_in_text(f"{body.name} {body.definition}")
+    )
 
     async def generate():
         full_text = ""
         async for chunk in mind_engine.analyze_concept_stream(
             body.name, body.definition, existing_names, td.mind_age_human,
             connection_count=n_edges,
+            grounding_context=grounding_context,
         ):
             full_text += chunk
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
@@ -215,6 +277,10 @@ def concept_list():
             "is_autonomous": bool(c["is_autonomous"]) if "is_autonomous" in c.keys() else False,
             "custom_label": c["custom_label"],
             "connection_count": len(conns),
+            "groundings": [
+                _grounding_row_to_dict(r)
+                for r in db.get_groundings_for_concept(c["id"])
+            ],
             "connections": [
                 {"other_name": r["other_name"],
                  "relationship": r["relationship"],
@@ -234,6 +300,64 @@ def get_concept(concept_id: int):
     return data
 
 
+# ── Grounding excerpts — protected writes, public reads ───────────────────
+
+@app.post("/grounding/excerpt")
+def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.require_auth)):
+    title = body.title.strip()
+    excerpt = body.excerpt.strip()
+    concept_names = [n.strip() for n in body.concept_names if n.strip()]
+    if not title or not excerpt or not concept_names:
+        raise HTTPException(
+            status_code=422,
+            detail="Нужны название, фрагмент и хотя бы одна существующая концепция",
+        )
+    if len(excerpt) > 5000:
+        raise HTTPException(status_code=422, detail="Фрагмент не должен превышать 5000 символов")
+
+    concepts = []
+    missing = []
+    for name in concept_names:
+        concept = db.get_concept_by_name(name)
+        if concept:
+            concepts.append(concept)
+        else:
+            missing.append(name)
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Концепции не найдены: {', '.join(missing)}",
+        )
+
+    state = db.get_mind_state()
+    td = get_time_display(state["born_at"])
+    now = time.time()
+    gid = db.insert_grounding_excerpt(
+        title,
+        body.author.strip() if body.author else None,
+        body.source.strip() if body.source else None,
+        excerpt,
+        td.mind_display,
+        now,
+    )
+    for concept in concepts:
+        db.link_grounding_to_concept(concept["id"], gid, body.note, now)
+
+    return {
+        "id": gid,
+        "title": title,
+        "concept_names": [c["name"] for c in concepts],
+    }
+
+
+@app.get("/grounding/excerpts")
+def grounding_excerpts(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    return [_grounding_row_to_dict(r) for r in db.list_groundings(limit, offset)]
+
+
 # ── Contemplation — protected ──────────────────────────────────────────────
 
 class ContemplateBody(BaseModel):
@@ -248,12 +372,14 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
     state = db.get_mind_state()
     td = get_time_display(state["born_at"])
     existing_names = graph.all_names()
+    grounding_context = _build_grounding_context(_concept_names_in_text(body.thought))
 
     async def generate():
         full_text = ""
         async for chunk in mind_engine.contemplate_stream(
             body.thought, existing_names, td.mind_age_human,
             connection_count=graph.edge_count(),
+            grounding_context=grounding_context,
         ):
             full_text += chunk
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"

@@ -69,7 +69,28 @@ export default function NodeDetail({ node, onClose }: Props) {
           <div className="flex gap-4 text-[10px] text-text-dim">
             <span>{concept.connection_count} связей</span>
             <span>{concept.processing_logs?.length || 0} записей в журнале</span>
+            <span>{concept.groundings?.length || 0} оснований</span>
           </div>
+
+          {/* Grounding excerpts */}
+          {concept.groundings?.length > 0 && (
+            <div>
+              <div className="text-text-dim uppercase tracking-widest text-[10px] mb-1">Основания опыта</div>
+              <div className="space-y-2">
+                {concept.groundings.map((g) => (
+                  <div key={g.id} className="border-l-2 border-gold/40 pl-2">
+                    <div className="text-gold">
+                      {g.author ? `${g.author}. ` : ''}{g.title}
+                    </div>
+                    <div className="text-text/75 leading-relaxed mt-1 whitespace-pre-wrap">
+                      {g.excerpt.slice(0, 500)}
+                      {g.excerpt.length > 500 && '…'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Connections */}
           {concept.connections?.length > 0 && (

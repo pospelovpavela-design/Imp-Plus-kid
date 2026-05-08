@@ -107,6 +107,19 @@ class ConceptGraph:
             {"content": r["content"], "created_at": r["created_at"]}
             for r in db.get_processing_logs(concept_id)
         ]
+        d["groundings"] = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "author": r["author"],
+                "source": r["source"],
+                "excerpt": r["excerpt"],
+                "note": r["note"],
+                "mind_time": r["mind_time"],
+                "created_at": r["created_at"],
+            }
+            for r in db.get_groundings_for_concept(concept_id)
+        ]
         return d
 
     def to_json(self) -> dict[str, Any]:
@@ -122,6 +135,7 @@ class ConceptGraph:
                 "is_autonomous": nd.get("is_autonomous", False),
                 "mind_time_added": nd.get("mind_time_added", ""),
                 "degree": self.g.degree(nid),
+                "grounding_count": len(db.get_groundings_for_concept(nid)),
                 "custom_label": nd.get("custom_label"),
             })
         links = []

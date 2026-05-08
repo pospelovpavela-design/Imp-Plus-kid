@@ -24,6 +24,7 @@ export interface Concept {
   connection_count: number
   connections: ConceptConnection[]
   processing_logs: ProcessingLog[]
+  groundings: GroundingExcerpt[]
 }
 
 export interface ConceptConnection {
@@ -37,6 +38,19 @@ export interface ProcessingLog {
   created_at: number
 }
 
+export interface GroundingExcerpt {
+  id: number
+  title: string
+  author: string | null
+  source: string | null
+  excerpt: string
+  note: string | null
+  mind_time: string
+  created_at: number
+  concept_name?: string | null
+  concept_names?: string | null
+}
+
 export interface GraphNode {
   id: number
   name: string
@@ -44,6 +58,7 @@ export interface GraphNode {
   is_autonomous: boolean
   mind_time_added: string
   degree: number
+  grounding_count: number
   custom_label: string | null
   // react-force-graph runtime fields
   x?: number

@@ -158,15 +158,24 @@ def _build_grounding_context(names: list[str], limit: int = 6) -> str:
     if not rows:
         return ""
     parts = []
+    grouped: dict[str, list] = {}
     for row in rows:
-        note = f" Привязка: {row['note']}." if row["note"] else ""
-        excerpt = row["excerpt"].strip().replace("\n", " ")
-        if len(excerpt) > 1200:
-            excerpt = excerpt[:1197].rstrip() + "..."
-        parts.append(
-            f"- Для концепции «{row['concept_name']}» дан материал опыта.{note} "
-            f"Переработай его в собственное определение через граф, без пересказа источника: «{excerpt}»"
-        )
+        grouped.setdefault(row["concept_name"], []).append(row)
+    for concept_name, concept_rows in grouped.items():
+        if len(concept_rows) > 1:
+            parts.append(
+                f"- Концепция «{concept_name}» имеет несколько материалов опыта. "
+                "Сравни их: найди общее ядро, различия, напряжения и собственное рабочее определение."
+            )
+        for row in concept_rows:
+            note = f" Привязка: {row['note']}." if row["note"] else ""
+            excerpt = row["excerpt"].strip().replace("\n", " ")
+            if len(excerpt) > 1200:
+                excerpt = excerpt[:1197].rstrip() + "..."
+            parts.append(
+                f"  - Материал для «{concept_name}».{note} "
+                f"Переработай его через граф, без пересказа источника: «{excerpt}»"
+            )
     return "\n".join(parts)
 
 

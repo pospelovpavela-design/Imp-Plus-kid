@@ -9,6 +9,7 @@ Auth policy (per spec):
 import asyncio
 import json
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -385,20 +386,44 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
 
     async def generate():
         full_text = ""
+        visible_text = ""
+        pending = ""
+        suppress_json = False
         async for chunk in mind_engine.contemplate_stream(
             body.thought, existing_names, td.mind_age_human,
             connection_count=graph.edge_count(),
             grounding_context=grounding_context,
         ):
             full_text += chunk
-            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+            if suppress_json:
+                continue
+            pending += chunk
+            marker = re.search(r"```json|```\s*\{", pending, flags=re.IGNORECASE)
+            if marker:
+                visible_chunk = pending[:marker.start()]
+                if visible_chunk:
+                    visible_text += visible_chunk
+                    yield f"data: {json.dumps({'chunk': visible_chunk}, ensure_ascii=False)}\n\n"
+                pending = ""
+                suppress_json = True
+                continue
+            if len(pending) > 16:
+                visible_chunk = pending[:-16]
+                pending = pending[-16:]
+                visible_text += visible_chunk
+                yield f"data: {json.dumps({'chunk': visible_chunk}, ensure_ascii=False)}\n\n"
 
-        db.insert_contemplation(body.thought, full_text, td.mind_display, time.time())
+        if pending and not suppress_json:
+            visible_text += pending
+            yield f"data: {json.dumps({'chunk': pending}, ensure_ascii=False)}\n\n"
+
+        visible_text = visible_text.strip()
+        db.insert_contemplation(body.thought, visible_text or full_text, td.mind_display, time.time())
         _, _, neologism = mind_engine.extract_connections_from_response(full_text)
         if neologism:
             db.insert_neologism(neologism, full_text[:300], "contemplation", None,
                                 td.mind_display, time.time())
-        asyncio.create_task(stream_engine.push_contemplation(full_text[:300]))
+        asyncio.create_task(stream_engine.push_contemplation((visible_text or full_text)[:300]))
         yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",

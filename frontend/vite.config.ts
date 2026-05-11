@@ -9,6 +9,7 @@ export default defineConfig({
       '/auth': 'http://localhost:8000',
       '/time': 'http://localhost:8000',
       '/concept': 'http://localhost:8000',
+      '/grounding': 'http://localhost:8000',
       '/contemplate': 'http://localhost:8000',
       '/stream': 'http://localhost:8000',
       '/mind': 'http://localhost:8000',

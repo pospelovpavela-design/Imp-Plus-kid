@@ -10,6 +10,7 @@ import {
 import type { Concept, GraphData, ThoughtEvent } from '../types'
 
 type Mode = 'contemplate' | 'add-concept' | 'grounding'
+const MAX_GROUNDING_EXCERPT_CHARS = 20000
 
 interface Props {
   onGraphUpdate: (g: GraphData) => void
@@ -141,6 +142,7 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
 
   const responseRef = useRef<HTMLDivElement>(null)
   const addResponseRef = useRef<HTMLDivElement>(null)
+  const groundingExcerptTooLong = groundingExcerpt.trim().length > MAX_GROUNDING_EXCERPT_CHARS
 
   useEffect(() => {
     if (mode !== 'grounding') return
@@ -258,6 +260,10 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
       .map((s) => s.trim())
       .filter(Boolean)
     if (!groundingTitle.trim() || !groundingExcerpt.trim() || conceptNames.length === 0 || groundingSaving) return
+    if (groundingExcerptTooLong) {
+      setGroundingError(`Фрагмент не должен превышать ${MAX_GROUNDING_EXCERPT_CHARS} символов`)
+      return
+    }
     resetGroundingStatus()
     setGroundingSaving(true)
     try {
@@ -622,6 +628,11 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                   className="w-full bg-panel border border-border text-text px-4 py-3 text-sm font-mono resize-none
                              focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
                 />
+                <div className={`text-[10px] font-mono text-right ${
+                  groundingExcerptTooLong ? 'text-red' : 'text-text-dim/50'
+                }`}>
+                  {groundingExcerpt.trim().length}/{MAX_GROUNDING_EXCERPT_CHARS}
+                </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input
@@ -643,7 +654,7 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
               </div>
               <button
                 onClick={handleAddGrounding}
-                disabled={!groundingTitle.trim() || !groundingExcerpt.trim() || !groundingConcepts.trim() || groundingSaving}
+                disabled={!groundingTitle.trim() || !groundingExcerpt.trim() || !groundingConcepts.trim() || groundingExcerptTooLong || groundingSaving}
                 className="px-6 py-2 text-xs uppercase tracking-widest border border-gold
                            text-gold bg-gold/10 hover:bg-gold/20
                            disabled:opacity-30 disabled:cursor-not-allowed transition-all"

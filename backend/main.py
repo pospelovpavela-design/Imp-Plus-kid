@@ -31,6 +31,7 @@ from time_engine import get_time_display, format_mind_timestamp
 # ── App state ──────────────────────────────────────────────────────────────
 
 graph: ConceptGraph | None = None
+MAX_GROUNDING_EXCERPT_CHARS = 20_000
 
 
 @asynccontextmanager
@@ -313,8 +314,11 @@ def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.require_aut
             status_code=422,
             detail="Нужны название, фрагмент и хотя бы одна существующая концепция",
         )
-    if len(excerpt) > 5000:
-        raise HTTPException(status_code=422, detail="Фрагмент не должен превышать 5000 символов")
+    if len(excerpt) > MAX_GROUNDING_EXCERPT_CHARS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Фрагмент не должен превышать {MAX_GROUNDING_EXCERPT_CHARS} символов",
+        )
 
     concepts = []
     missing = []

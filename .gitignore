@@ -10,6 +10,7 @@ env/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/.matplotlib-cache/
 *.log
 .DS_Store
 

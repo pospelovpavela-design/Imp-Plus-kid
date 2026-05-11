@@ -34,8 +34,8 @@ export default function StreamView({ graphData, initialEvents, token, onGraphUpd
 
         {/* Stats */}
         <div className="flex gap-4 px-4 py-2 border-b border-border text-[10px] text-text-dim shrink-0">
-          <span>Концепций: <span className="text-text font-mono">{graphData.nodes.length}</span></span>
-          <span>Связей: <span className="text-text font-mono">{graphData.links.length}</span></span>
+          <span>Концепций за 24ч: <span className="text-text font-mono">{graphData.nodes.length}</span></span>
+          <span>Связей за 24ч: <span className="text-text font-mono">{graphData.links.length}</span></span>
         </div>
 
         {/* Thought feed */}

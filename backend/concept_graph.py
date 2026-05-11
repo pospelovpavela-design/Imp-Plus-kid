@@ -74,6 +74,7 @@ class ConceptGraph:
                 row["concept_a_id"], row["concept_b_id"],
                 relationship=row["relationship"],
                 strength=row["strength"],
+                created_at=row["created_at"],
             )
 
     # ── Query ─────────────────────────────────────────────────────────────
@@ -122,9 +123,33 @@ class ConceptGraph:
         ]
         return d
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self, since: float | None = None) -> dict[str, Any]:
+        visible_node_ids: set[int] | None = None
+        visible_edges = list(self.g.edges(data=True))
+        if since is not None:
+            visible_edges = [
+                (a, b, ed) for a, b, ed in visible_edges
+                if float(ed.get("created_at") or 0) >= since
+            ]
+            visible_node_ids = {
+                nid for nid, nd in self.g.nodes(data=True)
+                if float(nd.get("real_time_added") or 0) >= since
+            }
+            for a, b, _ in visible_edges:
+                visible_node_ids.add(a)
+                visible_node_ids.add(b)
+
+        degree_by_id = dict(self.g.degree())
+        if since is not None:
+            recent_graph = nx.Graph()
+            recent_graph.add_nodes_from(visible_node_ids or set())
+            recent_graph.add_edges_from((a, b) for a, b, _ in visible_edges)
+            degree_by_id = dict(recent_graph.degree())
+
         nodes = []
         for nid in self.g.nodes:
+            if visible_node_ids is not None and nid not in visible_node_ids:
+                continue
             nd = self.g.nodes[nid]
             if "name" not in nd:
                 continue
@@ -134,17 +159,18 @@ class ConceptGraph:
                 "is_seed": nd.get("is_seed", False),
                 "is_autonomous": nd.get("is_autonomous", False),
                 "mind_time_added": nd.get("mind_time_added", ""),
-                "degree": self.g.degree(nid),
+                "degree": degree_by_id.get(nid, 0),
                 "grounding_count": len(db.get_groundings_for_concept(nid)),
                 "custom_label": nd.get("custom_label"),
             })
         links = []
-        for a, b, ed in self.g.edges(data=True):
+        for a, b, ed in visible_edges:
             links.append({
                 "source": a,
                 "target": b,
                 "relationship": ed.get("relationship", ""),
                 "strength": ed.get("strength", 1.0),
+                "created_at": ed.get("created_at"),
             })
         return {"nodes": nodes, "links": links}
 
@@ -168,7 +194,8 @@ class ConceptGraph:
         now = time.time()
         db.insert_connection(a_id, b_id, relationship, strength, now)
         if not self.g.has_edge(a_id, b_id):
-            self.g.add_edge(a_id, b_id, relationship=relationship, strength=strength)
+            self.g.add_edge(a_id, b_id, relationship=relationship, strength=strength,
+                            created_at=now)
 
     def add_processing_log(self, concept_id: int, content: str) -> None:
         db.insert_processing_log(concept_id, content, time.time())

@@ -11,6 +11,10 @@ DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "mind.db"
 
 
+def _norm_text(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
@@ -131,6 +135,30 @@ def init_db() -> None:
     except Exception:
         pass  # Column already exists — ok
 
+    # Safe migration for databases created before textual grounding existed.
+    with get_conn() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS grounding_excerpts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT    NOT NULL,
+                author      TEXT,
+                source      TEXT,
+                excerpt     TEXT    NOT NULL,
+                mind_time   TEXT    NOT NULL,
+                created_at  REAL    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS concept_groundings (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                concept_id   INTEGER NOT NULL REFERENCES concepts(id),
+                grounding_id INTEGER NOT NULL REFERENCES grounding_excerpts(id),
+                note         TEXT,
+                created_at   REAL    NOT NULL,
+                UNIQUE(concept_id, grounding_id)
+            );
+        """)
+        conn.commit()
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -177,6 +205,25 @@ def get_concept_by_id(cid: int) -> sqlite3.Row | None:
 def get_concept_by_name(name: str) -> sqlite3.Row | None:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM concepts WHERE name=?", (name,)).fetchone()
+
+
+def get_concept_by_name_normalized(name: str) -> sqlite3.Row | None:
+    needle = _norm_text(name)
+    for row in list_concepts():
+        if _norm_text(row["name"]) == needle:
+            return row
+    return None
+
+
+def find_concepts_by_name_fragment(fragment: str, limit: int = 5) -> list[sqlite3.Row]:
+    needle = _norm_text(fragment)
+    if not needle:
+        return []
+    matches = [
+        row for row in list_concepts()
+        if needle in _norm_text(row["name"]) or _norm_text(row["name"]) in needle
+    ]
+    return sorted(matches, key=lambda row: (len(row["name"]), -row["real_time_added"]))[:limit]
 
 
 def list_concepts() -> list[sqlite3.Row]:

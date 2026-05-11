@@ -249,15 +249,16 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
             )
         )
 
-        yield f"data: {json.dumps({'done': True, 'concept_id': cid, 'graph': graph.to_json()}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'concept_id': cid, 'graph': graph.to_json(since=time.time() - 24 * 3600)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/concept/graph")
-def get_graph():
-    return graph.to_json()
+def get_graph(hours: int = Query(24, ge=1, le=24 * 30)):
+    since = time.time() - hours * 3600
+    return graph.to_json(since=since)
 
 
 @app.get("/concept/list")
@@ -318,15 +319,19 @@ def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.require_aut
     concepts = []
     missing = []
     for name in concept_names:
-        concept = db.get_concept_by_name(name)
+        concept = db.get_concept_by_name(name) or db.get_concept_by_name_normalized(name)
         if concept:
             concepts.append(concept)
         else:
             missing.append(name)
     if missing:
+        suggestions: list[str] = []
+        for name in missing:
+            suggestions.extend(r["name"] for r in db.find_concepts_by_name_fragment(name))
+        suffix = f". Похожие: {', '.join(dict.fromkeys(suggestions))}" if suggestions else ""
         raise HTTPException(
             status_code=404,
-            detail=f"Концепции не найдены: {', '.join(missing)}",
+            detail=f"Концепции не найдены: {', '.join(missing)}{suffix}",
         )
 
     state = db.get_mind_state()

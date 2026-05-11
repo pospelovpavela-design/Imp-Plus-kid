@@ -74,6 +74,7 @@ export interface GraphLink {
   target: number | GraphNode
   relationship: string
   strength: number
+  created_at?: number
 }
 
 export interface GraphData {

@@ -18,7 +18,10 @@ async function handleResponse<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(body.detail || res.statusText)
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((item: any) => item?.msg || JSON.stringify(item)).join('; ')
+      : body.detail
+    throw new Error(detail || res.statusText || `HTTP ${res.status}`)
   }
   return res.json()
 }

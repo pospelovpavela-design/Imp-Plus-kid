@@ -4,9 +4,10 @@ import {
   addGroundingExcerpt,
   checkConceptStream,
   contemplateStream,
+  fetchConcepts,
   fetchStreamHistory,
 } from '../api'
-import type { GraphData, ThoughtEvent } from '../types'
+import type { Concept, GraphData, ThoughtEvent } from '../types'
 
 type Mode = 'contemplate' | 'add-concept' | 'grounding'
 
@@ -131,6 +132,7 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
   const [groundingSaving, setGroundingSaving] = useState(false)
   const [groundingStatus, setGroundingStatus] = useState('')
   const [groundingError, setGroundingError] = useState('')
+  const [conceptOptions, setConceptOptions] = useState<Concept[]>([])
 
   // ── History ─────────────────────────────────────────────────────────────
   const [history, setHistory] = useState<ThoughtEvent[]>([])
@@ -139,6 +141,13 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
 
   const responseRef = useRef<HTMLDivElement>(null)
   const addResponseRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (mode !== 'grounding') return
+    fetchConcepts()
+      .then(setConceptOptions)
+      .catch(() => setConceptOptions([]))
+  }, [mode])
 
   function resetContemplate() {
     setResponse('')
@@ -591,9 +600,15 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                   value={groundingConcepts}
                   onChange={(e) => setGroundingConcepts(e.target.value)}
                   placeholder="звезда, ночь, расстояние"
+                  list="grounding-concepts"
                   className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
                              focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
                 />
+                <datalist id="grounding-concepts">
+                  {conceptOptions.map((concept) => (
+                    <option key={concept.id} value={concept.name} />
+                  ))}
+                </datalist>
               </div>
               <div className="space-y-1">
                 <label className="text-text-dim text-[10px] uppercase tracking-widest block">

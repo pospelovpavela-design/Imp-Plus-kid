@@ -123,6 +123,19 @@ def init_db() -> None:
                 created_at   REAL    NOT NULL,
                 UNIQUE(concept_id, grounding_id)
             );
+
+            -- Evolving internal definitions synthesized by the mind
+            CREATE TABLE IF NOT EXISTS concept_working_definitions (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                concept_id       INTEGER NOT NULL REFERENCES concepts(id),
+                definition       TEXT    NOT NULL,
+                tension          TEXT,
+                source           TEXT    NOT NULL,
+                source_ref_id    INTEGER,
+                confidence       REAL    NOT NULL DEFAULT 0.5,
+                mind_time        TEXT    NOT NULL,
+                created_at       REAL    NOT NULL
+            );
         """)
         conn.commit()
     # Safe migration: add is_autonomous column for existing databases
@@ -155,6 +168,18 @@ def init_db() -> None:
                 note         TEXT,
                 created_at   REAL    NOT NULL,
                 UNIQUE(concept_id, grounding_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS concept_working_definitions (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                concept_id       INTEGER NOT NULL REFERENCES concepts(id),
+                definition       TEXT    NOT NULL,
+                tension          TEXT,
+                source           TEXT    NOT NULL,
+                source_ref_id    INTEGER,
+                confidence       REAL    NOT NULL DEFAULT 0.5,
+                mind_time        TEXT    NOT NULL,
+                created_at       REAL    NOT NULL
             );
         """)
         conn.commit()
@@ -356,6 +381,47 @@ def find_groundings_for_concept_names(names: list[str], limit: int = 6) -> list[
                 LIMIT ?""",
             (*names, limit),
         ).fetchall()
+
+
+def insert_working_definition(concept_id: int, definition: str,
+                              tension: str | None, source: str,
+                              source_ref_id: int | None, confidence: float,
+                              mind_time: str, created_at: float) -> int:
+    confidence = max(0.0, min(1.0, float(confidence)))
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO concept_working_definitions
+               (concept_id, definition, tension, source, source_ref_id,
+                confidence, mind_time, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (concept_id, definition, tension, source, source_ref_id,
+             confidence, mind_time, created_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_working_definitions_for_concept(concept_id: int, limit: int = 10) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT cwd.*, c.name AS concept_name
+               FROM concept_working_definitions cwd
+               JOIN concepts c ON c.id = cwd.concept_id
+               WHERE cwd.concept_id = ?
+               ORDER BY cwd.created_at DESC
+               LIMIT ?""",
+            (concept_id, limit),
+        ).fetchall()
+
+
+def get_latest_working_definitions_for_names(names: list[str], limit_per_concept: int = 2) -> list[sqlite3.Row]:
+    result: list[sqlite3.Row] = []
+    for name in names:
+        concept = get_concept_by_name_normalized(name)
+        if not concept:
+            continue
+        result.extend(get_working_definitions_for_concept(concept["id"], limit_per_concept))
+    return result
 
 
 def insert_stream_event(mind_time: str, event_type: str, content: str,

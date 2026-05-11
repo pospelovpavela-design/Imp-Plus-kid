@@ -121,6 +121,21 @@ class ConceptGraph:
             }
             for r in db.get_groundings_for_concept(concept_id)
         ]
+        d["working_definitions"] = [
+            {
+                "id": r["id"],
+                "concept_id": r["concept_id"],
+                "concept_name": r["concept_name"],
+                "definition": r["definition"],
+                "tension": r["tension"],
+                "source": r["source"],
+                "source_ref_id": r["source_ref_id"],
+                "confidence": r["confidence"],
+                "mind_time": r["mind_time"],
+                "created_at": r["created_at"],
+            }
+            for r in db.get_working_definitions_for_concept(concept_id)
+        ]
         return d
 
     def to_json(self, since: float | None = None) -> dict[str, Any]:

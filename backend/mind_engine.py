@@ -190,6 +190,81 @@ async def contemplate_stream(
             continue
 
 
+async def synthesize_working_definitions(
+    thought: str,
+    response: str,
+    concept_names: list[str],
+    mind_age: str,
+    connection_count: int = 0,
+    grounding_context: str | None = None,
+    working_definitions_context: str | None = None,
+) -> list[dict]:
+    if not concept_names:
+        return []
+    concepts = ", ".join(concept_names)
+    groundings = grounding_context.strip() if grounding_context else "Нет новых материалов опыта."
+    prior = working_definitions_context.strip() if working_definitions_context else "Предыдущих рабочих определений нет."
+    system = _build_system(
+        mind_age,
+        len(concept_names),
+        connection_count,
+        concept_names,
+        grounding_context,
+    )
+    prompt = f"""После созерцания нужно обновить рабочие определения концепций.
+
+Концепции для возможного обновления: {concepts}
+
+Предыдущие рабочие определения:
+{prior}
+
+Материалы опыта:
+{groundings}
+
+Мысль пользователя:
+{thought}
+
+Ответ разума:
+{response}
+
+Сформулируй только те рабочие определения, которые действительно изменились или уточнились.
+Рабочее определение — это не цитата и не справка, а внутренний синтез через граф.
+Если несколько оснований конфликтуют, сохрани напряжение в поле tension.
+
+Верни строго JSON без markdown:
+{{
+  "definitions": [
+    {{
+      "concept": "<точное имя концепции из списка>",
+      "definition": "<1-2 предложения рабочего определения>",
+      "tension": "<противоречие или напряжение, если есть; иначе null>",
+      "confidence": 0.0
+    }}
+  ]
+}}"""
+    client = _get_client()
+    for model in (MODEL, MODEL_FAST):
+        try:
+            result = await client.chat.completions.create(
+                model=model,
+                max_tokens=700,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            text = result.choices[0].message.content.strip()
+            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+            data = json.loads(match.group(0) if match else text)
+            definitions = data.get("definitions", [])
+            return definitions if isinstance(definitions, list) else []
+        except (RateLimitError, json.JSONDecodeError, AttributeError, KeyError):
+            if model == MODEL_FAST:
+                return []
+            continue
+    return []
+
+
 # ── Spontaneous reflection ────────────────────────────────────────────────
 
 async def generate_spontaneous(

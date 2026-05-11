@@ -70,7 +70,25 @@ export default function NodeDetail({ node, onClose }: Props) {
             <span>{concept.connection_count} связей</span>
             <span>{concept.processing_logs?.length || 0} записей в журнале</span>
             <span>{concept.groundings?.length || 0} оснований</span>
+            <span>{concept.working_definitions?.length || 0} рабочих определений</span>
           </div>
+
+          {concept.working_definitions?.length > 0 && (
+            <div>
+              <div className="text-text-dim uppercase tracking-widest text-[10px] mb-1">Рабочие определения</div>
+              <div className="space-y-2">
+                {concept.working_definitions.slice(0, 3).map((d) => (
+                  <div key={d.id} className="border-l-2 border-accent/40 pl-2">
+                    <div className="text-text/85 leading-relaxed">{d.definition}</div>
+                    {d.tension && <div className="text-text-dim mt-1">Напряжение: {d.tension}</div>}
+                    <div className="text-text-dim/50 mt-1 font-mono text-[10px]">
+                      {d.mind_time} · {Math.round(d.confidence * 100)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Grounding excerpts */}
           {concept.groundings?.length > 0 && (

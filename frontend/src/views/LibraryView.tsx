@@ -185,7 +185,25 @@ function ConceptDetail({ concept }: { concept: Concept }) {
         <Stat label="Связей" value={concept.connection_count} />
         <Stat label="Записей" value={concept.processing_logs?.length || 0} />
         <Stat label="Оснований" value={concept.groundings?.length || 0} />
+        <Stat label="Определений" value={concept.working_definitions?.length || 0} />
       </div>
+
+      {concept.working_definitions?.length > 0 && (
+        <div>
+          <div className="text-text-dim uppercase tracking-widest text-[10px] mb-2">Рабочие определения</div>
+          <div className="space-y-2">
+            {concept.working_definitions.slice(0, 3).map((d) => (
+              <div key={d.id} className="border-l-2 border-accent/50 pl-3 py-1">
+                <div className="text-text leading-relaxed">{d.definition}</div>
+                {d.tension && <div className="text-text-dim mt-1">Напряжение: {d.tension}</div>}
+                <div className="text-text-dim/60 mt-1 font-mono text-[10px]">
+                  {d.mind_time} · уверенность {Math.round(d.confidence * 100)}%
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Grounding excerpts */}
       {concept.groundings?.length > 0 && (

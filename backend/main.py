@@ -179,6 +179,39 @@ def _build_grounding_context(names: list[str], limit: int = 6) -> str:
     return "\n".join(parts)
 
 
+def _working_definition_row_to_dict(row):
+    return {
+        "id": row["id"],
+        "concept_id": row["concept_id"],
+        "concept_name": row["concept_name"] if "concept_name" in row.keys() else None,
+        "definition": row["definition"],
+        "tension": row["tension"],
+        "source": row["source"],
+        "source_ref_id": row["source_ref_id"],
+        "confidence": row["confidence"],
+        "mind_time": row["mind_time"],
+        "created_at": row["created_at"],
+    }
+
+
+def _build_working_definitions_context(names: list[str], limit_per_concept: int = 2) -> str:
+    rows = db.get_latest_working_definitions_for_names(names, limit_per_concept)
+    if not rows:
+        return ""
+    parts = []
+    for row in rows:
+        tension = f" Напряжение: {row['tension']}." if row["tension"] else ""
+        parts.append(
+            f"- «{row['concept_name']}»: {row['definition']}{tension} "
+            f"(уверенность {float(row['confidence']):.2f}, {row['mind_time']})"
+        )
+    return "\n".join(parts)
+
+
+def _combine_contexts(*contexts: str) -> str:
+    return "\n\n".join(c for c in contexts if c.strip())
+
+
 @app.post("/concept/check")
 async def check_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     """Stream concept pre-check: is this already covered? Auth required."""
@@ -191,12 +224,15 @@ async def check_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     grounding_context = _build_grounding_context(
         _concept_names_in_text(f"{body.name} {body.definition}")
     )
+    working_context = _build_working_definitions_context(
+        _concept_names_in_text(f"{body.name} {body.definition}")
+    )
 
     async def generate():
         async for chunk in mind_engine.check_concept_stream(
             body.name, body.definition, existing_names, td.mind_age_human,
             connection_count=graph.edge_count(),
-            grounding_context=grounding_context,
+            grounding_context=_combine_contexts(working_context, grounding_context),
         ):
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
@@ -221,13 +257,16 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     grounding_context = _build_grounding_context(
         _concept_names_in_text(f"{body.name} {body.definition}")
     )
+    working_context = _build_working_definitions_context(
+        _concept_names_in_text(f"{body.name} {body.definition}")
+    )
 
     async def generate():
         full_text = ""
         async for chunk in mind_engine.analyze_concept_stream(
             body.name, body.definition, existing_names, td.mind_age_human,
             connection_count=n_edges,
-            grounding_context=grounding_context,
+            grounding_context=_combine_contexts(working_context, grounding_context),
         ):
             full_text += chunk
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
@@ -290,6 +329,10 @@ def concept_list():
             "groundings": [
                 _grounding_row_to_dict(r)
                 for r in db.get_groundings_for_concept(c["id"])
+            ],
+            "working_definitions": [
+                _working_definition_row_to_dict(r)
+                for r in db.get_working_definitions_for_concept(c["id"])
             ],
             "connections": [
                 {"other_name": r["other_name"],
@@ -389,7 +432,9 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
     state = db.get_mind_state()
     td = get_time_display(state["born_at"])
     existing_names = graph.all_names()
-    grounding_context = _build_grounding_context(_concept_names_in_text(body.thought))
+    involved_names = _concept_names_in_text(body.thought)
+    grounding_context = _build_grounding_context(involved_names)
+    working_context = _build_working_definitions_context(involved_names)
 
     async def generate():
         full_text = ""
@@ -399,7 +444,7 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
         async for chunk in mind_engine.contemplate_stream(
             body.thought, existing_names, td.mind_age_human,
             connection_count=graph.edge_count(),
-            grounding_context=grounding_context,
+            grounding_context=_combine_contexts(working_context, grounding_context),
         ):
             full_text += chunk
             if suppress_json:
@@ -425,11 +470,38 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
             yield f"data: {json.dumps({'chunk': pending}, ensure_ascii=False)}\n\n"
 
         visible_text = visible_text.strip()
-        db.insert_contemplation(body.thought, visible_text or full_text, td.mind_display, time.time())
+        contemplation_id = db.insert_contemplation(
+            body.thought, visible_text or full_text, td.mind_display, time.time()
+        )
         _, _, neologism = mind_engine.extract_connections_from_response(full_text)
         if neologism:
             db.insert_neologism(neologism, full_text[:300], "contemplation", None,
                                 td.mind_display, time.time())
+        definitions = await mind_engine.synthesize_working_definitions(
+            body.thought,
+            visible_text or full_text,
+            involved_names,
+            td.mind_age_human,
+            connection_count=graph.edge_count(),
+            grounding_context=grounding_context,
+            working_definitions_context=working_context,
+        )
+        for item in definitions:
+            concept = db.get_concept_by_name_normalized(str(item.get("concept", "")))
+            definition = str(item.get("definition", "")).strip()
+            if not concept or not definition:
+                continue
+            tension = item.get("tension")
+            if tension is not None:
+                tension = str(tension).strip() or None
+            try:
+                confidence = float(item.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                confidence = 0.5
+            db.insert_working_definition(
+                concept["id"], definition[:2000], tension, "contemplation",
+                contemplation_id, confidence, td.mind_display, time.time()
+            )
         asyncio.create_task(stream_engine.push_contemplation((visible_text or full_text)[:300]))
         yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
 

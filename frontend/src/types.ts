@@ -25,6 +25,7 @@ export interface Concept {
   connections: ConceptConnection[]
   processing_logs: ProcessingLog[]
   groundings: GroundingExcerpt[]
+  working_definitions: WorkingDefinition[]
 }
 
 export interface ConceptConnection {
@@ -49,6 +50,19 @@ export interface GroundingExcerpt {
   created_at: number
   concept_name?: string | null
   concept_names?: string | null
+}
+
+export interface WorkingDefinition {
+  id: number
+  concept_id: number
+  concept_name?: string | null
+  definition: string
+  tension: string | null
+  source: string
+  source_ref_id: number | null
+  confidence: number
+  mind_time: string
+  created_at: number
 }
 
 export interface GraphNode {

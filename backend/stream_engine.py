@@ -64,15 +64,13 @@ def _build_grounding_context(names: list[str], limit: int = 6) -> str:
         return ""
     parts = []
     for row in rows:
-        author = f"{row['author']}. " if row["author"] else ""
-        source = f" Источник: {row['source']}." if row["source"] else ""
         note = f" Привязка: {row['note']}." if row["note"] else ""
         excerpt = row["excerpt"].strip().replace("\n", " ")
-        if len(excerpt) > 700:
-            excerpt = excerpt[:697].rstrip() + "..."
+        if len(excerpt) > 1200:
+            excerpt = excerpt[:1197].rstrip() + "..."
         parts.append(
-            f"- Концепция «{row['concept_name']}»: {author}{row['title']}.{source}{note} "
-            f"Фрагмент: «{excerpt}»"
+            f"- Для концепции «{row['concept_name']}» дан материал опыта.{note} "
+            f"Переработай его в собственное определение через граф, без пересказа источника: «{excerpt}»"
         )
     return "\n".join(parts)
 

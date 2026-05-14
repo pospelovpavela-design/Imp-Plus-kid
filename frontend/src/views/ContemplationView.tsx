@@ -259,7 +259,7 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-    if (!groundingTitle.trim() || !groundingExcerpt.trim() || conceptNames.length === 0 || groundingSaving) return
+    if (!groundingTitle.trim() || !groundingExcerpt.trim() || groundingSaving) return
     if (groundingExcerptTooLong) {
       setGroundingError(`Фрагмент не должен превышать ${MAX_GROUNDING_EXCERPT_CHARS} символов`)
       return
@@ -275,7 +275,12 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
         concept_names: conceptNames,
         note: groundingNote.trim() || undefined,
       })
-      setGroundingStatus(`Основание добавлено: ${saved.concept_names.join(', ')}`)
+      const linked = saved.concept_names.length > 0
+        ? `Связано с: ${saved.concept_names.join(', ')}`
+        : 'Связанные концепции не обнаружены'
+      const experience = saved.experience ? `\n${saved.experience}` : ''
+      setGroundingStatus(`Основание добавлено. ${linked}${experience}`)
+      if (saved.graph) onGraphUpdate(saved.graph)
       setGroundingTitle('')
       setGroundingAuthor('')
       setGroundingSource('')
@@ -599,13 +604,13 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
               </div>
               <div className="space-y-1">
                 <label className="text-text-dim text-[10px] uppercase tracking-widest block">
-                  Концепции через запятую
+                  Концепции через запятую (необязательно)
                 </label>
                 <input
                   type="text"
                   value={groundingConcepts}
                   onChange={(e) => setGroundingConcepts(e.target.value)}
-                  placeholder="звезда, ночь, расстояние"
+                  placeholder="Можно оставить пустым: разум свяжет сам"
                   list="grounding-concepts"
                   className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
                              focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
@@ -647,23 +652,23 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                   type="text"
                   value={groundingNote}
                   onChange={(e) => setGroundingNote(e.target.value)}
-                  placeholder="Краткая привязка к концепциям"
+                  placeholder="Ручная привязка, если нужна"
                   className="w-full bg-panel border border-border text-text px-4 py-2 text-sm font-mono
                              focus:outline-none focus:border-accent placeholder-text-dim/40 transition-colors"
                 />
               </div>
               <button
                 onClick={handleAddGrounding}
-                disabled={!groundingTitle.trim() || !groundingExcerpt.trim() || !groundingConcepts.trim() || groundingExcerptTooLong || groundingSaving}
+                disabled={!groundingTitle.trim() || !groundingExcerpt.trim() || groundingExcerptTooLong || groundingSaving}
                 className="px-6 py-2 text-xs uppercase tracking-widest border border-gold
                            text-gold bg-gold/10 hover:bg-gold/20
                            disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               >
-                {groundingSaving ? 'Сохранение...' : 'Добавить основание'}
+                {groundingSaving ? 'Анализ...' : 'Передать фрагмент разуму'}
               </button>
             </div>
             {groundingStatus && (
-              <div className="shrink-0 text-gold text-xs border border-gold/30 bg-gold/5 px-3 py-2">
+              <div className="shrink-0 text-gold text-xs border border-gold/30 bg-gold/5 px-3 py-2 whitespace-pre-line">
                 {groundingStatus}
               </div>
             )}
@@ -674,7 +679,7 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
             )}
             <div className="flex-1 flex flex-col items-center justify-center text-text-dim/30 space-y-3">
               <div className="text-5xl">◌</div>
-              <div className="text-xs">Фрагмент будет использован как основание при последующих размышлениях</div>
+              <div className="text-xs">Фрагмент будет проанализирован, превращён в опыт и связан с графом</div>
             </div>
           </>
         )}

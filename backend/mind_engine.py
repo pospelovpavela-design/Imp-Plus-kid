@@ -265,6 +265,85 @@ async def synthesize_working_definitions(
     return []
 
 
+async def analyze_grounding_excerpt(
+    title: str,
+    excerpt: str,
+    existing_names: list[str],
+    mind_age: str,
+    connection_count: int = 0,
+    author: str | None = None,
+    source: str | None = None,
+    preferred_concept_names: list[str] | None = None,
+) -> dict:
+    """Analyze a raw book fragment and return concept links + synthesized experience."""
+    system = _build_system(
+        mind_age,
+        len(existing_names),
+        connection_count,
+        existing_names,
+    )
+    preferred = ", ".join(preferred_concept_names or []) or "Нет ручных подсказок."
+    concepts = ", ".join(existing_names) if existing_names else "(пусто)"
+    meta = ", ".join(part for part in [title, author, source] if part) or title
+    prompt = f"""Дан фрагмент книги. Его нужно превратить в опыт разума и связать с концепциями графа.
+
+Метаданные: {meta}
+Ручные подсказки концепций: {preferred}
+Доступные концепции графа: {concepts}
+
+Фрагмент:
+«{excerpt}»
+
+Сделай не пересказ и не литературный комментарий. Выдели, какие различения, переходы,
+ограничения или противоречия фрагмент даёт графу. Связывай только с точными именами
+концепций из списка доступных концепций. Если ручные подсказки даны, проверь их, но можешь
+добавить другие точные концепции из графа.
+
+Верни строго JSON без markdown:
+{{
+  "experience": "<2-4 коротких предложения: внутренний синтез опыта без упоминания автора или источника>",
+  "concept_links": [
+    {{
+      "concept": "<точное имя концепции из доступного списка>",
+      "note": "<почему фрагмент заземляет эту концепцию, 1 короткое предложение>"
+    }}
+  ],
+  "definitions": [
+    {{
+      "concept": "<точное имя концепции из concept_links>",
+      "definition": "<1-2 предложения рабочего определения после переработки фрагмента>",
+      "tension": "<противоречие или напряжение, если есть; иначе null>",
+      "confidence": 0.0
+    }}
+  ]
+}}"""
+
+    client = _get_client()
+    for model in (MODEL, MODEL_FAST):
+        try:
+            result = await client.chat.completions.create(
+                model=model,
+                max_tokens=1000,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            text = result.choices[0].message.content.strip()
+            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+            data = json.loads(match.group(0) if match else text)
+            return {
+                "experience": str(data.get("experience") or "").strip(),
+                "concept_links": data.get("concept_links") if isinstance(data.get("concept_links"), list) else [],
+                "definitions": data.get("definitions") if isinstance(data.get("definitions"), list) else [],
+            }
+        except (RateLimitError, json.JSONDecodeError, AttributeError, KeyError):
+            if model == MODEL_FAST:
+                return {"experience": "", "concept_links": [], "definitions": []}
+            continue
+    return {"experience": "", "concept_links": [], "definitions": []}
+
+
 # ── Spontaneous reflection ────────────────────────────────────────────────
 
 async def generate_spontaneous(

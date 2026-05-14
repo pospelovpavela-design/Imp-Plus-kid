@@ -123,7 +123,7 @@ class GroundingExcerptBody(BaseModel):
     excerpt: str
     author: str | None = None
     source: str | None = None
-    concept_names: list[str]
+    concept_names: list[str] = []
     note: str | None = None
 
 
@@ -356,14 +356,14 @@ def get_concept(concept_id: int):
 # ── Grounding excerpts — protected writes, public reads ───────────────────
 
 @app.post("/grounding/excerpt")
-def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.require_auth)):
+async def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.require_auth)):
     title = body.title.strip()
     excerpt = body.excerpt.strip()
     concept_names = [n.strip() for n in body.concept_names if n.strip()]
-    if not title or not excerpt or not concept_names:
+    if not title or not excerpt:
         raise HTTPException(
             status_code=422,
-            detail="Нужны название, фрагмент и хотя бы одна существующая концепция",
+            detail="Нужны название и фрагмент",
         )
     if len(excerpt) > MAX_GROUNDING_EXCERPT_CHARS:
         raise HTTPException(
@@ -392,6 +392,31 @@ def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.require_aut
     state = db.get_mind_state()
     td = get_time_display(state["born_at"])
     now = time.time()
+
+    analysis = await mind_engine.analyze_grounding_excerpt(
+        title,
+        excerpt,
+        graph.all_names(),
+        td.mind_age_human,
+        connection_count=graph.edge_count(),
+        author=body.author.strip() if body.author else None,
+        source=body.source.strip() if body.source else None,
+        preferred_concept_names=[c["name"] for c in concepts],
+    )
+
+    concepts_by_name = {c["name"].casefold(): c for c in concepts}
+    for link in analysis.get("concept_links", []):
+        concept = db.get_concept_by_name_normalized(str(link.get("concept", "")))
+        if concept:
+            concepts_by_name[concept["name"].casefold()] = concept
+
+    if not concepts_by_name:
+        for name in _concept_names_in_text(excerpt, limit=8):
+            concept = db.get_concept_by_name(name)
+            if concept:
+                concepts_by_name[concept["name"].casefold()] = concept
+
+    concepts = list(concepts_by_name.values())
     gid = db.insert_grounding_excerpt(
         title,
         body.author.strip() if body.author else None,
@@ -400,13 +425,51 @@ def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.require_aut
         td.mind_display,
         now,
     )
+
+    notes_by_name: dict[str, str] = {}
+    for link in analysis.get("concept_links", []):
+        name = str(link.get("concept", "")).casefold()
+        note = str(link.get("note", "")).strip()
+        if name and note:
+            notes_by_name[name] = note[:500]
+
     for concept in concepts:
-        db.link_grounding_to_concept(concept["id"], gid, body.note, now)
+        note = body.note or notes_by_name.get(concept["name"].casefold())
+        db.link_grounding_to_concept(concept["id"], gid, note, now)
+
+    linked_names = [c["name"] for c in concepts]
+    for item in analysis.get("definitions", []):
+        concept = db.get_concept_by_name_normalized(str(item.get("concept", "")))
+        definition = str(item.get("definition", "")).strip()
+        if not concept or concept["name"] not in linked_names or not definition:
+            continue
+        tension = item.get("tension")
+        if tension is not None:
+            tension = str(tension).strip() or None
+        try:
+            confidence = float(item.get("confidence", 0.55))
+        except (TypeError, ValueError):
+            confidence = 0.55
+        db.insert_working_definition(
+            concept["id"], definition[:2000], tension, "grounding",
+            gid, confidence, td.mind_display, time.time()
+        )
+
+    experience = str(analysis.get("experience") or "").strip()
+    if experience:
+        asyncio.create_task(
+            stream_engine.push_reaction(
+                f"Фрагмент превращён в опыт: {experience[:260]}",
+                linked_names,
+            )
+        )
 
     return {
         "id": gid,
         "title": title,
-        "concept_names": [c["name"] for c in concepts],
+        "concept_names": linked_names,
+        "experience": experience,
+        "graph": graph.to_json(since=time.time() - 24 * 3600),
     }
 
 

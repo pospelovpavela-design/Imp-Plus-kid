@@ -90,13 +90,13 @@ export async function addGroundingExcerpt(input: {
   source?: string
   concept_names: string[]
   note?: string
-}): Promise<{ id: number; title: string; concept_names: string[] }> {
+}): Promise<{ id: number; title: string; concept_names: string[]; experience: string; graph: GraphData }> {
   const res = await fetch(`${BASE}/grounding/excerpt`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(input),
   })
-  return handleResponse<{ id: number; title: string; concept_names: string[] }>(res)
+  return handleResponse<{ id: number; title: string; concept_names: string[]; experience: string; graph: GraphData }>(res)
 }
 
 /**

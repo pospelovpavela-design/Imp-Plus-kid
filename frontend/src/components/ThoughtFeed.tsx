@@ -4,7 +4,6 @@ import type { ThoughtEvent } from '../types'
 
 interface Props {
   initial: ThoughtEvent[]
-  token: string
 }
 
 const TYPE_CONFIG: Record<ThoughtEvent['type'], { label: string; colorClass: string }> = {
@@ -15,7 +14,7 @@ const TYPE_CONFIG: Record<ThoughtEvent['type'], { label: string; colorClass: str
   autonomous:    { label: '✦ синтез',    colorClass: 'border-gold text-gold' },
 }
 
-export default function ThoughtFeed({ initial, token }: Props) {
+export default function ThoughtFeed({ initial }: Props) {
   const [events, setEvents] = useState<ThoughtEvent[]>(initial)
   const containerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -27,7 +26,7 @@ export default function ThoughtFeed({ initial, token }: Props) {
   }, [autoScroll])
 
   const { connected, reconnectCount } = useSSE<ThoughtEvent>(
-    `/stream?token=${encodeURIComponent(token)}`,
+    '/stream',
     onEvent,
   )
 

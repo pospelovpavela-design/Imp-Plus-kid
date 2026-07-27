@@ -14,6 +14,8 @@ import time
 import logging
 from typing import Any
 
+from groq import RateLimitError
+
 import db
 import mind_engine
 from time_engine import (
@@ -32,6 +34,24 @@ _concept_graph: Any = None
 # Autonomous concept creation — once per 24 real hours
 _last_autonomous_time: float = 0.0
 AUTONOMOUS_INTERVAL = 86400  # seconds
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s; using %d", name, default)
+        return default
+    if value <= 0:
+        logger.warning("Invalid %s; using %d", name, default)
+        return default
+    return value
+
+
+def _rate_limit_backoff(failures: int, initial: int, maximum: int) -> int:
+    """Return a bounded exponential delay for consecutive Groq 429 responses."""
+    exponent = max(0, min(failures - 1, 30))
+    return min(maximum, initial * (2 ** exponent))
 
 
 def init(born_at: float, concept_graph: Any) -> None:
@@ -120,7 +140,6 @@ async def _check_milestones() -> None:
     new_count = check_count_milestones(n_concepts, n_edges, _reached_milestones)
 
     for key, label in new_time + new_count:
-        _reached_milestones.add(key)
         names = _concept_graph.all_names()
         try:
             grounding_context = _build_grounding_context(names)
@@ -129,9 +148,12 @@ async def _check_milestones() -> None:
                 connection_count=n_edges,
                 grounding_context=grounding_context,
             )
+        except RateLimitError:
+            raise
         except Exception as exc:
             logger.error("Milestone reflection failed: %s", exc)
             reflection = f"Рубеж достигнут: {label}."
+        _reached_milestones.add(key)
         db.insert_milestone(key, time.time(), td.mind_display, reflection)
         await _save_and_broadcast("milestone", reflection, [])
         logger.info("Milestone reached: %s", key)
@@ -162,6 +184,7 @@ async def _maybe_create_autonomous_concept() -> None:
         cid = _concept_graph.add_concept(
             name, definition, td.mind_display, now, is_autonomous=True
         )
+        _last_autonomous_time = now
 
         # Analyze to build connections (collect full text, no streaming needed)
         full_text = ""
@@ -196,6 +219,8 @@ async def _maybe_create_autonomous_concept() -> None:
             [name],
         )
         logger.info("Autonomous concept created: %s", name)
+    except RateLimitError:
+        raise
     except Exception as exc:
         logger.error("Autonomous concept creation failed: %s", exc)
         _last_autonomous_time = now  # Prevent rapid retries on error
@@ -204,15 +229,27 @@ async def _maybe_create_autonomous_concept() -> None:
 async def spontaneous_loop() -> None:
     """Background coroutine. Runs until cancelled."""
     # Support both new (STREAM_INTERVAL_SECONDS) and legacy (SPONTANEOUS_INTERVAL) var names
-    interval = int(
-        os.environ.get("STREAM_INTERVAL_SECONDS")
-        or os.environ.get("SPONTANEOUS_INTERVAL")
-        or 180
+    interval = _positive_int_env(
+        "STREAM_INTERVAL_SECONDS",
+        _positive_int_env("SPONTANEOUS_INTERVAL", 180),
     )
-    logger.info("Spontaneous loop starting (interval=%ds)", interval)
+    backoff_initial = _positive_int_env("RATE_LIMIT_BACKOFF_INITIAL_SECONDS", 900)
+    backoff_max = max(
+        backoff_initial,
+        _positive_int_env("RATE_LIMIT_BACKOFF_MAX_SECONDS", 21600),
+    )
+    rate_limit_failures = 0
+    next_delay = interval
+    logger.info(
+        "Spontaneous loop starting (interval=%ds, rate-limit backoff=%ds..%ds)",
+        interval,
+        backoff_initial,
+        backoff_max,
+    )
     await asyncio.sleep(10)  # wait for server to fully boot
     while True:
-        await asyncio.sleep(interval)
+        await asyncio.sleep(next_delay)
+        next_delay = interval
         try:
             await _check_milestones()
             await _maybe_create_autonomous_concept()
@@ -269,6 +306,20 @@ async def spontaneous_loop() -> None:
             clean_thought = re.sub(r'(?i)\bJSON[:\s]*', "", clean_thought)
             clean_thought = clean_thought.strip()
             await _save_and_broadcast("spontaneous", clean_thought, [a["name"], b["name"]])
+            rate_limit_failures = 0
+        except RateLimitError:
+            rate_limit_failures += 1
+            next_delay = _rate_limit_backoff(
+                rate_limit_failures,
+                backoff_initial,
+                backoff_max,
+            )
+            logger.warning(
+                "Groq rate limit reached; pausing spontaneous generation for %ds "
+                "(consecutive failures=%d)",
+                next_delay,
+                rate_limit_failures,
+            )
         except Exception as exc:
             logger.error("Spontaneous loop error: %s", exc)
 

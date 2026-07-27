@@ -1,0 +1,17 @@
+[Unit]
+Description=Back up the IMPLUS SQLite database
+ConditionPathExists=/opt/impplus/data/mind.db
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/opt/impplus/.venv/bin/python /opt/impplus/scripts/backup_db.py --source /opt/impplus/data/mind.db --destination /root/backups/impplus --keep 124
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/impplus
+ReadWritePaths=/root/backups/impplus

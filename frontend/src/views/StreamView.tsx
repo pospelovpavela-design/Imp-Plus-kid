@@ -8,11 +8,10 @@ import type { GraphData, GraphNode, ThoughtEvent } from '../types'
 interface Props {
   graphData: GraphData
   initialEvents: ThoughtEvent[]
-  token: string
   onGraphUpdate: (g: GraphData) => void
 }
 
-export default function StreamView({ graphData, initialEvents, token, onGraphUpdate }: Props) {
+export default function StreamView({ graphData, initialEvents, onGraphUpdate }: Props) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [feedExpanded, setFeedExpanded] = useState(false)
 
@@ -40,7 +39,7 @@ export default function StreamView({ graphData, initialEvents, token, onGraphUpd
 
         {/* Thought feed */}
         <div className="flex-1 p-4 overflow-hidden">
-          <ThoughtFeed initial={initialEvents} token={token} />
+          <ThoughtFeed initial={initialEvents} />
         </div>
       </div>
 

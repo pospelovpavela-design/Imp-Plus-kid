@@ -1,8 +1,5 @@
 /**
  * useSSE — Server-Sent Events with automatic exponential-backoff reconnect.
- *
- * The token is passed as a query param because EventSource does not support
- * custom request headers.
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 

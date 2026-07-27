@@ -165,9 +165,7 @@ export async function contemplateStream(
 export function openEventStream(
   onEvent: (event: ThoughtEvent) => void,
 ): () => void {
-  const token = getToken()
-  const url = `${BASE}/stream?token=${encodeURIComponent(token)}`
-  const es = new EventSource(url)
+  const es = new EventSource(`${BASE}/stream`)
   es.onmessage = (e) => {
     if (!e.data || e.data.startsWith(':')) return
     try {

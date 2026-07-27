@@ -14,7 +14,7 @@ import json
 import os
 import time
 
-from fastapi import HTTPException, Security, Query
+from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 _EXPIRY_SECONDS = 30 * 24 * 3600  # 30 days
@@ -83,24 +83,20 @@ def _decode_token(token: str) -> dict:
 
 def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Security(security),
-    token: str | None = Query(default=None),
 ) -> dict:
     """For write endpoints — raises 401 if no valid token."""
-    raw = credentials.credentials if credentials else token
-    if not raw:
+    if not credentials:
         raise HTTPException(status_code=401, detail="Требуется авторизация")
-    return _decode_token(raw)
+    return _decode_token(credentials.credentials)
 
 
 def optional_auth(
     credentials: HTTPAuthorizationCredentials | None = Security(security),
-    token: str | None = Query(default=None),
 ) -> dict | None:
     """For read endpoints — returns payload if token present, None otherwise."""
-    raw = credentials.credentials if credentials else token
-    if not raw:
+    if not credentials:
         return None
     try:
-        return _decode_token(raw)
+        return _decode_token(credentials.credentials)
     except HTTPException:
         return None

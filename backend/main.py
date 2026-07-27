@@ -572,10 +572,10 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ── Stream SSE — PUBLIC (token optional) ──────────────────────────────────
+# ── Stream SSE — PUBLIC ───────────────────────────────────────────────────
 
 @app.get("/stream")
-async def stream_sse(token: str | None = Query(default=None)):
+async def stream_sse():
     """Live thought feed via SSE. Public — no auth required."""
     queue = stream_engine.subscribe()
 

@@ -1,4 +1,18 @@
-import type { TimeData, Concept, GraphData, ThoughtEvent, MindState, Milestone, GroundingExcerpt } from './types'
+import type {
+  TimeData,
+  Concept,
+  GraphData,
+  ThoughtEvent,
+  MindState,
+  Milestone,
+  GroundingExcerpt,
+  CognitiveMetrics,
+  CognitiveInquiry,
+  CognitiveBelief,
+  CognitivePrediction,
+  SelfModelEntry,
+  ExternalObservation,
+} from './types'
 
 const BASE = ''  // proxied by Vite
 
@@ -184,6 +198,63 @@ export function openEventStream(
 export async function fetchMindState(): Promise<MindState> {
   const res = await fetch(`${BASE}/mind/state`, { headers: authHeaders() })
   return handleResponse<MindState>(res)
+}
+
+export async function fetchCognitiveMetrics(): Promise<CognitiveMetrics> {
+  const res = await fetch(`${BASE}/mind/metrics`, { headers: authHeaders() })
+  return handleResponse<CognitiveMetrics>(res)
+}
+
+export async function fetchCognitiveInquiries(): Promise<CognitiveInquiry[]> {
+  const res = await fetch(`${BASE}/mind/inquiries?limit=100`, { headers: authHeaders() })
+  return handleResponse<CognitiveInquiry[]>(res)
+}
+
+export async function fetchCognitiveBeliefs(): Promise<CognitiveBelief[]> {
+  const res = await fetch(`${BASE}/mind/beliefs?limit=100`, { headers: authHeaders() })
+  return handleResponse<CognitiveBelief[]>(res)
+}
+
+export async function fetchCognitivePredictions(): Promise<CognitivePrediction[]> {
+  const res = await fetch(`${BASE}/mind/predictions?limit=100`, { headers: authHeaders() })
+  return handleResponse<CognitivePrediction[]>(res)
+}
+
+export async function fetchSelfModel(): Promise<SelfModelEntry[]> {
+  const res = await fetch(`${BASE}/mind/self-model`, { headers: authHeaders() })
+  return handleResponse<SelfModelEntry[]>(res)
+}
+
+export async function fetchExternalObservations(): Promise<ExternalObservation[]> {
+  const res = await fetch(`${BASE}/mind/observations?limit=30`, { headers: authHeaders() })
+  return handleResponse<ExternalObservation[]>(res)
+}
+
+export async function addExternalObservation(input: {
+  content: string
+  source: string
+  concept_names: string[]
+  reliability: number
+}): Promise<{ id: number; event_id: number }> {
+  const res = await fetch(`${BASE}/mind/observations`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(input),
+  })
+  return handleResponse<{ id: number; event_id: number }>(res)
+}
+
+export async function resolvePrediction(
+  id: number,
+  outcome: 'confirmed' | 'disconfirmed' | 'inconclusive',
+  evidence: string,
+): Promise<{ id: number; status: 'resolved'; outcome: string }> {
+  const res = await fetch(`${BASE}/mind/predictions/${id}/resolve`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ outcome, evidence }),
+  })
+  return handleResponse<{ id: number; status: 'resolved'; outcome: string }>(res)
 }
 
 // ── History ─────────────────────────────────────────────────────────────────

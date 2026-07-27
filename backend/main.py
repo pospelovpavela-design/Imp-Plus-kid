@@ -20,7 +20,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import db
 import stream_engine
@@ -56,8 +56,14 @@ async def lifespan(app: FastAPI):
 
     stream_engine.init(born_at, graph)
     task = asyncio.create_task(stream_engine.spontaneous_loop())
-    yield
-    task.cancel()
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="IMPLUS — Isolated Mind", lifespan=lifespan)
@@ -123,8 +129,20 @@ class GroundingExcerptBody(BaseModel):
     excerpt: str
     author: str | None = None
     source: str | None = None
-    concept_names: list[str] = []
+    concept_names: list[str] = Field(default_factory=list)
     note: str | None = None
+
+
+class ExternalObservationBody(BaseModel):
+    content: str
+    source: str
+    concept_names: list[str] = Field(default_factory=list)
+    reliability: float = 0.8
+
+
+class PredictionResolutionBody(BaseModel):
+    outcome: str
+    evidence: str
 
 
 def _grounding_row_to_dict(row):
@@ -212,6 +230,34 @@ def _combine_contexts(*contexts: str) -> str:
     return "\n\n".join(c for c in contexts if c.strip())
 
 
+def _canonical_concept_names(names: list[str]) -> list[str]:
+    canonical: list[str] = []
+    missing: list[str] = []
+    for raw_name in names:
+        name = raw_name.strip()
+        if not name:
+            continue
+        concept = db.get_concept_by_name(name) or db.get_concept_by_name_normalized(name)
+        if concept:
+            if concept["name"] not in canonical:
+                canonical.append(concept["name"])
+        else:
+            missing.append(name)
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Концепции не найдены: {', '.join(missing)}",
+        )
+    return canonical
+
+
+def _json_column(row, column: str, fallback):
+    try:
+        return json.loads(row[column] or json.dumps(fallback))
+    except (json.JSONDecodeError, TypeError):
+        return fallback
+
+
 @app.post("/concept/check")
 async def check_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     """Stream concept pre-check: is this already covered? Auth required."""
@@ -271,18 +317,45 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
             full_text += chunk
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
 
-        # Persist concept + connections
+        # Persist the operator-provided concept. Model-suggested relations remain
+        # proposals until a later independent cognitive cycle accepts them.
         cid = graph.add_concept(body.name.strip(), body.definition.strip(),
                                 td.mind_display, time.time())
         graph.add_processing_log(cid, full_text)
 
         connections, custom_label, neologism = mind_engine.extract_connections_from_response(full_text)
+        proposed_relations: list[str] = []
+        inquiry_names = [body.name.strip()]
         for conn in connections:
             other = db.get_concept_by_name(conn.get("concept", ""))
-            if other:
-                graph.add_connection(cid, other["id"],
-                                     conn.get("relationship", ""),
-                                     float(conn.get("strength", 0.5)))
+            relationship = " ".join(str(conn.get("relationship", "")).split())
+            try:
+                confidence = max(0.0, min(1.0, float(conn.get("strength", 0.5))))
+            except (TypeError, ValueError):
+                confidence = 0.5
+            if other and other["id"] != cid and relationship:
+                db.record_relation_evidence(
+                    cid,
+                    other["id"],
+                    relationship,
+                    "proposed",
+                    confidence,
+                    time.time(),
+                    reason="Предложено первичным анализом новой концепции",
+                )
+                inquiry_names.append(other["name"])
+                proposed_relations.append(
+                    f"{body.name.strip()} → {other['name']}: {relationship}"
+                )
+        if proposed_relations:
+            db.create_inquiry(
+                f"Какие предложенные связи концепции «{body.name.strip()}» "
+                "подтверждаются памятью или внешними основаниями?",
+                list(dict.fromkeys(inquiry_names)),
+                0.9,
+                "operator_concept",
+                time.time(),
+            )
         label = custom_label or neologism
         if label:
             graph.set_custom_label(cid, label)
@@ -292,7 +365,13 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
 
         asyncio.create_task(
             stream_engine.push_reaction(
-                f"Добавлена концепция «{body.name}». " + full_text[:200],
+                f"Оператор добавил концепцию «{body.name.strip()}»: "
+                f"{body.definition.strip()}. "
+                + (
+                    "Связи ожидают проверки: " + "; ".join(proposed_relations[:8])
+                    if proposed_relations
+                    else "Проверяемые связи пока не предложены."
+                ),
                 [body.name],
             )
         )
@@ -337,7 +416,8 @@ def concept_list():
             "connections": [
                 {"other_name": r["other_name"],
                  "relationship": r["relationship"],
-                 "strength": r["strength"]}
+                 "strength": r["strength"],
+                 "confidence": r["confidence"]}
                 for r in conns
             ],
             "processing_logs": logs,
@@ -615,7 +695,6 @@ async def stream_sse():
 def mind_state():
     state = db.get_mind_state()
     td = get_time_display(state["born_at"])
-    stream_events = db.get_stream_events(limit=1, offset=0)
     # Get total count via a quick DB query
     with db.get_conn() as conn:
         stream_count = conn.execute("SELECT COUNT(*) FROM thought_stream").fetchone()[0]
@@ -631,7 +710,186 @@ def mind_state():
         "connection_count": graph.edge_count(),
         "stream_event_count": stream_count,
         "milestones_reached": len(db.list_milestones()),
+        "cognitive": db.get_cognitive_metrics(),
     }
+
+
+# ── Cognitive observability — public reads, protected feedback ─────────────
+
+@app.get("/mind/metrics")
+def cognitive_metrics():
+    return db.get_cognitive_metrics()
+
+
+@app.get("/mind/inquiries")
+def cognitive_inquiries(
+    status: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    allowed = {None, "open", "resolved", "blocked"}
+    if status not in allowed:
+        raise HTTPException(status_code=422, detail="Недопустимый статус вопроса")
+    return [
+        {
+            **dict(row),
+            "concept_names": _json_column(row, "concept_names", []),
+        }
+        for row in db.list_inquiries(status, limit, offset)
+    ]
+
+
+@app.get("/mind/beliefs")
+def cognitive_beliefs(
+    status: str = Query("active"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    if status not in {"active", "revised", "retracted"}:
+        raise HTTPException(status_code=422, detail="Недопустимый статус убеждения")
+    return [
+        {
+            **dict(row),
+            "concept_names": _json_column(row, "concept_names", []),
+            "evidence_event_ids": _json_column(row, "evidence_event_ids", []),
+            "counterevidence_event_ids": _json_column(
+                row,
+                "counterevidence_event_ids",
+                [],
+            ),
+        }
+        for row in db.list_beliefs(status, limit, offset)
+    ]
+
+
+@app.get("/mind/predictions")
+def cognitive_predictions(
+    status: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    if status not in {None, "pending", "resolved"}:
+        raise HTTPException(status_code=422, detail="Недопустимый статус прогноза")
+    return [
+        {
+            **dict(row),
+            "concept_names": _json_column(row, "concept_names", []),
+        }
+        for row in db.list_predictions(status, limit, offset)
+    ]
+
+
+@app.get("/mind/cycles")
+def cognitive_cycles(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    return [
+        {
+            **dict(row),
+            "candidate": _json_column(row, "candidate_json", {}),
+            "critique": _json_column(row, "critique_json", {}),
+            "memory_event_ids": _json_column(row, "memory_event_ids", []),
+        }
+        for row in db.list_cognitive_cycles(limit, offset)
+    ]
+
+
+@app.get("/mind/observations")
+def cognitive_observations(limit: int = Query(50, ge=1, le=500)):
+    return [
+        {
+            **dict(row),
+            "concept_names": _json_column(row, "concept_names", []),
+        }
+        for row in db.list_external_observations(limit)
+    ]
+
+
+@app.get("/mind/self-model")
+def cognitive_self_model():
+    return [dict(row) for row in db.list_self_model_entries()]
+
+
+@app.get("/mind/consolidations")
+def cognitive_consolidations(limit: int = Query(20, ge=1, le=100)):
+    return [
+        {
+            **dict(row),
+            "source_event_ids": _json_column(row, "source_event_ids", []),
+            "result": _json_column(row, "result_json", {}),
+        }
+        for row in db.list_consolidation_runs(limit)
+    ]
+
+
+@app.post("/mind/observations")
+async def add_cognitive_observation(
+    body: ExternalObservationBody,
+    _=Depends(auth.require_auth),
+):
+    content = " ".join(body.content.split()).strip()
+    source = " ".join(body.source.split()).strip()
+    if not content or not source:
+        raise HTTPException(status_code=422, detail="Нужны наблюдение и источник")
+    if len(content) > 10_000 or len(source) > 500:
+        raise HTTPException(status_code=422, detail="Наблюдение или источник слишком длинные")
+    if not 0.0 <= body.reliability <= 1.0:
+        raise HTTPException(status_code=422, detail="Надёжность должна быть от 0 до 1")
+    concept_names = _canonical_concept_names(body.concept_names)
+    now = time.time()
+    observation_id = db.insert_external_observation(
+        content,
+        source,
+        concept_names,
+        body.reliability,
+        now,
+    )
+    event_id = await stream_engine.push_external_event(
+        "observation",
+        f"Внешнее наблюдение ({source}): {content}",
+        concept_names,
+        salience=0.9,
+        reliability=body.reliability,
+    )
+    return {"id": observation_id, "event_id": event_id}
+
+
+@app.post("/mind/predictions/{prediction_id}/resolve")
+async def resolve_cognitive_prediction(
+    prediction_id: int,
+    body: PredictionResolutionBody,
+    _=Depends(auth.require_auth),
+):
+    outcome = body.outcome.strip().casefold()
+    evidence = " ".join(body.evidence.split()).strip()
+    if outcome not in {"confirmed", "disconfirmed", "inconclusive"}:
+        raise HTTPException(status_code=422, detail="Недопустимый исход прогноза")
+    if not evidence:
+        raise HTTPException(status_code=422, detail="Нужно свидетельство исхода")
+    prediction = db.get_prediction(prediction_id)
+    if prediction is None:
+        raise HTTPException(status_code=404, detail="Прогноз не найден")
+    now = time.time()
+    if not db.resolve_prediction(prediction_id, outcome, evidence, now):
+        raise HTTPException(status_code=409, detail="Прогноз уже закрыт")
+    concept_names = _json_column(prediction, "concept_names", [])
+    await stream_engine.push_external_event(
+        "feedback",
+        f"Прогноз #{prediction_id}: {outcome}. Свидетельство: {evidence}",
+        concept_names,
+        salience=1.0,
+        reliability=0.95,
+    )
+    if outcome == "disconfirmed":
+        db.create_inquiry(
+            f"Почему был опровергнут прогноз: {prediction['statement']}?",
+            concept_names,
+            0.95,
+            "prediction_disconfirmed",
+            now,
+        )
+    return {"id": prediction_id, "status": "resolved", "outcome": outcome}
 
 
 # ── History — PUBLIC ───────────────────────────────────────────────────────
@@ -650,6 +908,9 @@ def history_stream(
             "content": r["content"],
             "concepts_involved": json.loads(r["concepts_involved"]),
             "created_at": r["created_at"],
+            "salience": r["salience"],
+            "reliability": r["reliability"],
+            "cycle_id": r["cycle_id"],
         }
         for r in rows
     ]

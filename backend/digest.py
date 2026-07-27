@@ -59,7 +59,10 @@ def get_concept_count():
 
 def get_edge_count():
     with db() as c:
-        return c.execute("SELECT COUNT(*) FROM concept_connections").fetchone()[0]
+        return c.execute(
+            """SELECT COUNT(*) FROM concept_connections
+               WHERE status='active' AND concept_a_id<>concept_b_id"""
+        ).fetchone()[0]
 
 
 def get_recent_graph(since: float):
@@ -71,6 +74,8 @@ def get_recent_graph(since: float):
                JOIN concepts ca ON ca.id = cc.concept_a_id
                JOIN concepts cb ON cb.id = cc.concept_b_id
                WHERE cc.created_at >= ?
+                 AND cc.status='active'
+                 AND cc.concept_a_id<>cc.concept_b_id
                ORDER BY cc.created_at""",
             (since,),
         ).fetchall()]

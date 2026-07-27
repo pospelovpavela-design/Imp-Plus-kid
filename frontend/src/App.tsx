@@ -5,14 +5,16 @@ import MindClock from './components/MindClock'
 import StreamView from './views/StreamView'
 import LibraryView from './views/LibraryView'
 import ContemplationView from './views/ContemplationView'
+import MetacognitionView from './views/MetacognitionView'
 import type { GraphData, ThoughtEvent } from './types'
 
-type Tab = 'stream' | 'library' | 'contemplate'
+type Tab = 'stream' | 'library' | 'contemplate' | 'metacognition'
 
 const TABS: { id: Tab; label: string; icon: string; short: string }[] = [
   { id: 'stream',      label: 'ПОТОК',      icon: '◈', short: 'Поток' },
   { id: 'library',     label: 'БИБЛИОТЕКА', icon: '≡', short: 'Граф' },
   { id: 'contemplate', label: 'СОЗЕРЦАНИЕ', icon: '◇', short: 'Разум' },
+  { id: 'metacognition', label: 'ПРОВЕРКА', icon: '✓', short: 'Проверка' },
 ]
 
 export default function App() {
@@ -112,6 +114,7 @@ export default function App() {
         {tab === 'contemplate' && (
           <ContemplationView onGraphUpdate={setGraphData} />
         )}
+        {tab === 'metacognition' && <MetacognitionView />}
       </main>
 
       {/* Bottom navigation — mobile only */}

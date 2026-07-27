@@ -12,6 +12,10 @@ const TYPE_CONFIG: Record<ThoughtEvent['type'], { label: string; colorClass: str
   milestone:     { label: 'рубеж',       colorClass: 'border-gold/50 text-gold' },
   contemplation: { label: 'созерцание',  colorClass: 'border-border-bright/70 text-text' },
   autonomous:    { label: '✦ синтез',    colorClass: 'border-gold text-gold' },
+  cognitive:     { label: 'проверка',     colorClass: 'border-accent/60 text-accent-glow' },
+  consolidation: { label: 'консолидация', colorClass: 'border-teal/60 text-teal' },
+  observation:   { label: 'наблюдение',   colorClass: 'border-text/50 text-text' },
+  feedback:      { label: 'исход',        colorClass: 'border-gold/70 text-gold' },
 }
 
 export default function ThoughtFeed({ initial }: Props) {

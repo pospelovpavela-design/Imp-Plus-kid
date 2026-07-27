@@ -51,7 +51,15 @@ class ConceptGraph:
             a = db.get_concept_by_name(a_name)
             b = db.get_concept_by_name(b_name)
             if a and b:
-                db.insert_connection(a["id"], b["id"], rel, strength, now)
+                db.upsert_connection(
+                    a["id"],
+                    b["id"],
+                    rel,
+                    strength,
+                    now,
+                    source="seed",
+                    confidence=1.0,
+                )
                 self.g.add_edge(a["id"], b["id"], relationship=rel, strength=strength)
 
     # ── Load ──────────────────────────────────────────────────────────────
@@ -74,6 +82,8 @@ class ConceptGraph:
                 row["concept_a_id"], row["concept_b_id"],
                 relationship=row["relationship"],
                 strength=row["strength"],
+                confidence=row["confidence"],
+                evidence_count=row["evidence_count"],
                 created_at=row["created_at"],
             )
 
@@ -87,6 +97,36 @@ class ConceptGraph:
 
     def all_names(self) -> list[str]:
         return [self.g.nodes[n]["name"] for n in self.g.nodes if "name" in self.g.nodes[n]]
+
+    def relevant_names(self, focus_names: list[str], limit: int = 36) -> list[str]:
+        by_name = {
+            self.g.nodes[node_id]["name"].casefold(): node_id
+            for node_id in self.g.nodes
+            if "name" in self.g.nodes[node_id]
+        }
+        selected: list[str] = []
+        seen: set[int] = set()
+        for name in focus_names:
+            node_id = by_name.get(name.casefold())
+            if node_id is None or node_id in seen:
+                continue
+            seen.add(node_id)
+            selected.append(self.g.nodes[node_id]["name"])
+            neighbours = sorted(
+                self.g.neighbors(node_id),
+                key=lambda other: float(
+                    self.g.edges[node_id, other].get("confidence", 0.5)
+                ),
+                reverse=True,
+            )
+            for neighbour in neighbours:
+                if neighbour in seen:
+                    continue
+                seen.add(neighbour)
+                selected.append(self.g.nodes[neighbour]["name"])
+                if len(selected) >= limit:
+                    return selected
+        return selected
 
     def get_node_data(self, concept_id: int) -> dict | None:
         if concept_id not in self.g.nodes:
@@ -185,6 +225,7 @@ class ConceptGraph:
                 "target": b,
                 "relationship": ed.get("relationship", ""),
                 "strength": ed.get("strength", 1.0),
+                "confidence": ed.get("confidence", 0.5),
                 "created_at": ed.get("created_at"),
             })
         return {"nodes": nodes, "links": links}
@@ -204,13 +245,56 @@ class ConceptGraph:
         )
         return cid
 
-    def add_connection(self, a_id: int, b_id: int,
-                       relationship: str, strength: float) -> None:
+    def add_connection(
+        self,
+        a_id: int,
+        b_id: int,
+        relationship: str,
+        strength: float,
+        *,
+        source: str = "analysis",
+        confidence: float | None = None,
+    ) -> bool:
         now = time.time()
-        db.insert_connection(a_id, b_id, relationship, strength, now)
-        if not self.g.has_edge(a_id, b_id):
-            self.g.add_edge(a_id, b_id, relationship=relationship, strength=strength,
-                            created_at=now)
+        connection_id = db.upsert_connection(
+            a_id,
+            b_id,
+            relationship,
+            strength,
+            now,
+            source=source,
+            confidence=strength if confidence is None else confidence,
+        )
+        if connection_id is None:
+            return False
+        row = db.get_connection_between(a_id, b_id)
+        self.g.add_edge(
+            a_id,
+            b_id,
+            relationship=row["relationship"] if row else relationship,
+            strength=float(row["strength"]) if row else strength,
+            confidence=float(row["confidence"]) if row else confidence or strength,
+            evidence_count=int(row["evidence_count"]) if row else 1,
+            created_at=float(row["created_at"]) if row else now,
+        )
+        return True
+
+    def sync_connection(self, a_id: int, b_id: int) -> None:
+        """Reflect the persisted active/archive state in the in-memory graph."""
+        row = db.get_connection_between(a_id, b_id)
+        if row is None or row["status"] != "active" or a_id == b_id:
+            if self.g.has_edge(a_id, b_id):
+                self.g.remove_edge(a_id, b_id)
+            return
+        self.g.add_edge(
+            a_id,
+            b_id,
+            relationship=row["relationship"],
+            strength=float(row["strength"]),
+            confidence=float(row["confidence"]),
+            evidence_count=int(row["evidence_count"]),
+            created_at=float(row["created_at"]),
+        )
 
     def add_processing_log(self, concept_id: int, content: str) -> None:
         db.insert_processing_log(concept_id, content, time.time())

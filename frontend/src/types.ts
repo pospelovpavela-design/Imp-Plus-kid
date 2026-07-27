@@ -32,6 +32,7 @@ export interface ConceptConnection {
   other_name: string
   relationship: string
   strength: number
+  confidence: number
 }
 
 export interface ProcessingLog {
@@ -88,6 +89,7 @@ export interface GraphLink {
   target: number | GraphNode
   relationship: string
   strength: number
+  confidence: number
   created_at?: number
 }
 
@@ -99,10 +101,22 @@ export interface GraphData {
 export interface ThoughtEvent {
   id: number
   mind_time: string
-  type: 'spontaneous' | 'reaction' | 'milestone' | 'contemplation' | 'autonomous'
+  type:
+    | 'spontaneous'
+    | 'reaction'
+    | 'milestone'
+    | 'contemplation'
+    | 'autonomous'
+    | 'cognitive'
+    | 'consolidation'
+    | 'observation'
+    | 'feedback'
   content: string
   concepts_involved: string[]
   created_at: number
+  salience?: number
+  reliability?: number
+  cycle_id?: number | null
 }
 
 export interface Milestone {
@@ -125,4 +139,80 @@ export interface MindState {
   connection_count: number
   stream_event_count: number
   milestones_reached: number
+  cognitive: CognitiveMetrics
+}
+
+export interface CognitiveMetrics {
+  concepts: number
+  active_edges: number
+  archived_edges: number
+  active_graph_density: number
+  grounded_concepts: number
+  grounding_coverage: number
+  defined_concepts: number
+  definition_coverage: number
+  open_inquiries: number
+  pending_predictions: number
+  active_self_loops: number
+  active_fallback_edges: number
+  cognitive_cycles: number
+  accepted_cycle_rate: number | null
+  resolved_predictions: number
+  prediction_brier_score: number | null
+}
+
+export interface CognitiveInquiry {
+  id: number
+  question: string
+  concept_names: string[]
+  priority: number
+  status: 'open' | 'resolved' | 'blocked'
+  origin: string
+  attempts: number
+  last_result: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface CognitiveBelief {
+  id: number
+  statement: string
+  concept_names: string[]
+  confidence: number
+  status: 'active' | 'revised' | 'retracted'
+  evidence_event_ids: number[]
+  counterevidence_event_ids: number[]
+  created_at: number
+  updated_at: number
+}
+
+export interface CognitivePrediction {
+  id: number
+  statement: string
+  test_method: string
+  concept_names: string[]
+  confidence: number
+  status: 'pending' | 'resolved'
+  outcome: 'confirmed' | 'disconfirmed' | 'inconclusive' | null
+  evidence: string | null
+  expected_by: number | null
+  created_at: number
+  resolved_at: number | null
+}
+
+export interface SelfModelEntry {
+  key: string
+  value: string
+  confidence: number
+  evidence: string
+  updated_at: number
+}
+
+export interface ExternalObservation {
+  id: number
+  content: string
+  source: string
+  concept_names: string[]
+  reliability: number
+  created_at: number
 }

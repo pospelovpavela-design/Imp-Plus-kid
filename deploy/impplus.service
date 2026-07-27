@@ -5,9 +5,10 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/impplus/backend
 EnvironmentFile=/opt/impplus/.env
-ExecStart=/opt/impplus/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log
+ExecStart=/opt/impplus/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log --timeout-graceful-shutdown 10
 Restart=always
 RestartSec=5
+TimeoutStopSec=20
 StandardOutput=journal
 StandardError=journal
 

@@ -13,5 +13,4 @@ IOSchedulingClass=idle
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadOnlyPaths=/opt/impplus
-ReadWritePaths=/root/backups/impplus
+ReadWritePaths=/opt/impplus/data /root/backups/impplus

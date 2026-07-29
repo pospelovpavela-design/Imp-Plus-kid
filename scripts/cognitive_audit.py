@@ -49,6 +49,11 @@ def audit(database: Path) -> dict:
                WHERE status='resolved'
                  AND outcome IN ('confirmed', 'disconfirmed')"""
         ).fetchall()
+        daily_insights = scalar(conn, "SELECT COUNT(*) FROM daily_insights")
+        unsent_daily_insights = scalar(
+            conn,
+            "SELECT COUNT(*) FROM daily_insights WHERE sent_at IS NULL",
+        )
 
     max_edges = concepts * (concepts - 1) / 2 if concepts > 1 else 0
     brier = None
@@ -71,6 +76,8 @@ def audit(database: Path) -> dict:
         "accepted_cycle_rate": accepted / cycles if cycles else None,
         "resolved_predictions": len(predictions),
         "prediction_brier_score": brier,
+        "daily_insights": daily_insights,
+        "unsent_daily_insights": unsent_daily_insights,
     }
 
 

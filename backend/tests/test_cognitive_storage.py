@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db
 import cognitive_engine
+import daily_insight_engine
+import digest
 from concept_graph import ConceptGraph
 
 
@@ -268,6 +270,125 @@ class CognitiveStorageTests(unittest.TestCase):
         )
         self.assertEqual(event["accepted_relations"], 0)
         self.assertIsNone(db.get_connection_between(self.a_id, third_id))
+
+    def test_daily_insight_is_evidence_bounded_and_idempotent(self):
+        now = time.time()
+        event_id = db.insert_stream_event(
+            "День 1",
+            "observation",
+            "Альфа сохранила наблюдаемое различие.",
+            ["альфа"],
+            now,
+            salience=0.9,
+            reliability=0.9,
+        )
+        cycle_id = db.insert_cognitive_cycle(
+            "test",
+            "альфа ↔ бета",
+            {
+                "observation": "Различие повторилось.",
+                "relations": [],
+            },
+            {
+                "verdict": "accept",
+                "reliability": 0.8,
+                "reason": "Поддержано наблюдением.",
+            },
+            [event_id],
+            "accept",
+            0.8,
+            now,
+        )
+        candidate = {
+            "continuation": "различие устойчиво.",
+            "evidence_event_ids": [event_id, 999999],
+            "evidence_cycle_ids": [cycle_id, 999999],
+            "confidence": 0.75,
+        }
+        critique = {
+            "continuation": (
+                "Сегодня за день я понял, что устойчивым можно считать только "
+                "повторённое различие."
+            ),
+            "evidence_event_ids": [event_id, 999999],
+            "evidence_cycle_ids": [cycle_id, 999999],
+            "confidence": 0.8,
+            "reason": "Есть наблюдение и принятый цикл.",
+        }
+        with (
+            patch(
+                "daily_insight_engine.mind_engine.generate_daily_insight_candidate",
+                new=AsyncMock(return_value=candidate),
+            ),
+            patch(
+                "daily_insight_engine.mind_engine.critique_daily_insight_candidate",
+                new=AsyncMock(return_value=critique),
+            ),
+        ):
+            insight, created = asyncio.run(
+                daily_insight_engine.generate_for_date(
+                    daily_insight_engine.local_today(now),
+                    now - 3600,
+                    now=now,
+                )
+            )
+            repeated, repeated_created = asyncio.run(
+                daily_insight_engine.generate_for_date(
+                    daily_insight_engine.local_today(now),
+                    now - 3600,
+                    now=now,
+                )
+            )
+
+        self.assertTrue(created)
+        self.assertFalse(repeated_created)
+        self.assertEqual(insight["id"], repeated["id"])
+        self.assertEqual(
+            insight["content"].count(daily_insight_engine.PREFIX),
+            1,
+        )
+        self.assertEqual(insight["source_event_ids"], [event_id])
+        self.assertEqual(insight["source_cycle_ids"], [cycle_id])
+        with db.get_conn() as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM daily_insights").fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM thought_stream WHERE type='daily_insight'"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_telegram_digest_sends_only_unsent_daily_insight_once(self):
+        now = time.time()
+        row, created = db.insert_daily_insight(
+            daily_insight_engine.local_today(now).isoformat(),
+            "Сегодня за день я понял, что проверка важнее повторения.",
+            0.8,
+            [],
+            [],
+            {},
+            "День 1",
+            [],
+            now,
+        )
+        self.assertTrue(created)
+
+        async def prepare():
+            current = db.get_daily_insight(row["local_date"])
+            return daily_insight_engine.row_to_dict(current)
+
+        with (
+            patch("digest.prepare_today", side_effect=prepare),
+            patch("digest.send_telegram", return_value=True) as send,
+        ):
+            self.assertEqual(digest.main(), 0)
+            self.assertEqual(digest.main(), 0)
+
+        send.assert_called_once_with(row["content"])
+        self.assertIsNotNone(db.get_daily_insight(row["local_date"])["sent_at"])
 
 
 if __name__ == "__main__":

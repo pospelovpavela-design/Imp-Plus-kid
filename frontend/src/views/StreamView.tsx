@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import MindClock from '../components/MindClock'
 import ThoughtFeed from '../components/ThoughtFeed'
+import DailyInsightPanel from '../components/DailyInsightPanel'
 import ConceptGraph from '../components/ConceptGraph'
 import NodeDetail from '../components/NodeDetail'
 import type { GraphData, GraphNode, ThoughtEvent } from '../types'
@@ -14,6 +15,7 @@ interface Props {
 export default function StreamView({ graphData, initialEvents, onGraphUpdate }: Props) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [feedExpanded, setFeedExpanded] = useState(false)
+  const [mode, setMode] = useState<'stream' | 'daily'>('stream')
 
   return (
     <div className="flex flex-col md:flex-row h-full overflow-hidden">
@@ -37,9 +39,35 @@ export default function StreamView({ graphData, initialEvents, onGraphUpdate }: 
           <span>Связей за 24ч: <span className="text-text font-mono">{graphData.links.length}</span></span>
         </div>
 
-        {/* Thought feed */}
+        <div className="flex border-b border-border px-4 shrink-0">
+          <button
+            type="button"
+            onClick={() => setMode('stream')}
+            className={`border-b-2 px-3 py-2 text-[10px] uppercase tracking-widest ${
+              mode === 'stream'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-dim hover:text-text'
+            }`}
+          >
+            Поток
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('daily')}
+            className={`border-b-2 px-3 py-2 text-[10px] uppercase tracking-widest ${
+              mode === 'daily'
+                ? 'border-teal text-teal'
+                : 'border-transparent text-text-dim hover:text-text'
+            }`}
+          >
+            Итог дня
+          </button>
+        </div>
+
         <div className="flex-1 p-4 overflow-hidden">
-          <ThoughtFeed initial={initialEvents} />
+          {mode === 'stream'
+            ? <ThoughtFeed initial={initialEvents} />
+            : <DailyInsightPanel />}
         </div>
       </div>
 

@@ -314,6 +314,19 @@ def _init_cognitive_schema() -> None:
                 updated_at REAL NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS daily_insights (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                local_date       TEXT    NOT NULL UNIQUE,
+                content          TEXT    NOT NULL,
+                confidence       REAL    NOT NULL,
+                source_event_ids TEXT    NOT NULL DEFAULT '[]',
+                source_cycle_ids TEXT    NOT NULL DEFAULT '[]',
+                generation_json  TEXT    NOT NULL DEFAULT '{}',
+                stream_event_id  INTEGER,
+                created_at       REAL    NOT NULL,
+                sent_at          REAL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_connections_status
                 ON concept_connections(status);
             CREATE INDEX IF NOT EXISTS idx_thought_memory_quality
@@ -324,6 +337,8 @@ def _init_cognitive_schema() -> None:
                 ON predictions(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_cycles_created
                 ON cognitive_cycles(created_at);
+            CREATE INDEX IF NOT EXISTS idx_daily_insights_created
+                ON daily_insights(created_at);
         """)
 
         # Preserve all legacy rows while removing known graph pollution from active reasoning.
@@ -339,7 +354,7 @@ def _init_cognitive_schema() -> None:
                WHERE status = 'active'
                  AND (concept_a_id = concept_b_id OR relationship = 'спонтанная связь')"""
         )
-        conn.execute("PRAGMA user_version = 2")
+        conn.execute("PRAGMA user_version = 3")
         conn.commit()
 
     _init_memory_fts()
@@ -829,6 +844,14 @@ def get_stream_events(limit: int = 100, offset: int = 0) -> list[sqlite3.Row]:
             "SELECT * FROM thought_stream ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
+
+
+def get_stream_event(event_id: int) -> sqlite3.Row | None:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM thought_stream WHERE id=?",
+            (event_id,),
+        ).fetchone()
 
 
 def insert_contemplation(user_thought: str, mind_response: str,
@@ -1439,6 +1462,15 @@ def get_cognitive_metrics() -> dict:
         pending_predictions = conn.execute(
             "SELECT COUNT(*) FROM predictions WHERE status='pending'"
         ).fetchone()[0]
+        daily_insights = conn.execute(
+            "SELECT COUNT(*) FROM daily_insights"
+        ).fetchone()[0]
+        unsent_daily_insights = conn.execute(
+            "SELECT COUNT(*) FROM daily_insights WHERE sent_at IS NULL"
+        ).fetchone()[0]
+        latest_daily_row = conn.execute(
+            "SELECT local_date FROM daily_insights ORDER BY local_date DESC LIMIT 1"
+        ).fetchone()
         active_self_loops = conn.execute(
             """SELECT COUNT(*) FROM concept_connections
                WHERE status='active' AND concept_a_id=concept_b_id"""
@@ -1474,6 +1506,11 @@ def get_cognitive_metrics() -> dict:
             "definition_coverage": defined / concepts if concepts else 0.0,
             "open_inquiries": open_inquiries,
             "pending_predictions": pending_predictions,
+            "daily_insights": daily_insights,
+            "unsent_daily_insights": unsent_daily_insights,
+            "latest_daily_insight_date": (
+                latest_daily_row["local_date"] if latest_daily_row else None
+            ),
             "active_self_loops": active_self_loops,
             "active_fallback_edges": active_fallback_edges,
             "cognitive_cycles": cycles,
@@ -1481,3 +1518,157 @@ def get_cognitive_metrics() -> dict:
             "resolved_predictions": len(resolved),
             "prediction_brier_score": brier,
         }
+
+
+# ── Daily synthesis ───────────────────────────────────────────────────────
+
+def list_daily_source_events(
+    start_at: float,
+    end_at: float,
+    limit: int = 160,
+) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM thought_stream
+               WHERE created_at >= ? AND created_at < ?
+                 AND type <> 'daily_insight'
+                 AND (
+                     reliability >= 0.6
+                     OR type IN ('consolidation', 'observation', 'feedback')
+                 )
+               ORDER BY created_at ASC
+               LIMIT ?""",
+            (start_at, end_at, limit),
+        ).fetchall()
+
+
+def list_daily_source_cycles(
+    start_at: float,
+    end_at: float,
+    limit: int = 120,
+) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM cognitive_cycles
+               WHERE created_at >= ? AND created_at < ?
+               ORDER BY created_at ASC
+               LIMIT ?""",
+            (start_at, end_at, limit),
+        ).fetchall()
+
+
+def list_daily_source_beliefs(
+    start_at: float,
+    end_at: float,
+    limit: int = 50,
+) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM beliefs
+               WHERE updated_at >= ? AND updated_at < ?
+               ORDER BY confidence DESC, updated_at ASC
+               LIMIT ?""",
+            (start_at, end_at, limit),
+        ).fetchall()
+
+
+def list_daily_source_predictions(
+    start_at: float,
+    end_at: float,
+    limit: int = 50,
+) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM predictions
+               WHERE (created_at >= ? AND created_at < ?)
+                  OR (resolved_at >= ? AND resolved_at < ?)
+               ORDER BY created_at ASC
+               LIMIT ?""",
+            (start_at, end_at, start_at, end_at, limit),
+        ).fetchall()
+
+
+def get_daily_insight(local_date: str) -> sqlite3.Row | None:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM daily_insights WHERE local_date=?",
+            (local_date,),
+        ).fetchone()
+
+
+def list_daily_insights(limit: int = 30, offset: int = 0) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM daily_insights
+               ORDER BY local_date DESC LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+
+
+def insert_daily_insight(
+    local_date: str,
+    content: str,
+    confidence: float,
+    source_event_ids: list[int],
+    source_cycle_ids: list[int],
+    generation: dict,
+    mind_time: str,
+    concept_names: list[str],
+    created_at: float,
+) -> tuple[sqlite3.Row, bool]:
+    confidence = max(0.0, min(1.0, float(confidence)))
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            "SELECT * FROM daily_insights WHERE local_date=?",
+            (local_date,),
+        ).fetchone()
+        if existing:
+            return existing, False
+
+        stream_cur = conn.execute(
+            """INSERT INTO thought_stream
+               (mind_time, type, content, concepts_involved, created_at,
+                salience, reliability, consolidated, cycle_id)
+               VALUES (?, 'daily_insight', ?, ?, ?, 1.0, ?, 1, NULL)""",
+            (
+                mind_time,
+                content,
+                json.dumps(concept_names, ensure_ascii=False),
+                created_at,
+                confidence,
+            ),
+        )
+        cur = conn.execute(
+            """INSERT INTO daily_insights
+               (local_date, content, confidence, source_event_ids,
+                source_cycle_ids, generation_json, stream_event_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                local_date,
+                content,
+                confidence,
+                json.dumps(source_event_ids),
+                json.dumps(source_cycle_ids),
+                json.dumps(generation, ensure_ascii=False),
+                int(stream_cur.lastrowid),
+                created_at,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM daily_insights WHERE id=?",
+            (cur.lastrowid,),
+        ).fetchone()
+        conn.commit()
+        return row, True
+
+
+def mark_daily_insight_sent(insight_id: int, sent_at: float) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE daily_insights SET sent_at=?
+               WHERE id=? AND sent_at IS NULL""",
+            (sent_at, insight_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0

@@ -16,6 +16,7 @@ from typing import Any
 from groq import RateLimitError
 
 import cognitive_engine
+import daily_insight_engine
 import db
 import mind_engine
 from time_engine import (
@@ -214,6 +215,14 @@ async def spontaneous_loop() -> None:
             )
             if consolidation is not None:
                 await broadcast(consolidation)
+            daily_result = await daily_insight_engine.maybe_generate_today(_born_at)
+            if daily_result is not None:
+                insight, created = daily_result
+                if created:
+                    daily_event = daily_insight_engine.stream_event_payload(insight)
+                    if daily_event is not None:
+                        await broadcast(daily_event)
+                    logger.info("Daily insight generated for %s", insight["local_date"])
             rate_limit_failures = 0
         except RateLimitError:
             rate_limit_failures += 1

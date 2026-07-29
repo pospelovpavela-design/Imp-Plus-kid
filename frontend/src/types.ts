@@ -111,6 +111,7 @@ export interface ThoughtEvent {
     | 'consolidation'
     | 'observation'
     | 'feedback'
+    | 'daily_insight'
   content: string
   concepts_involved: string[]
   created_at: number
@@ -153,6 +154,9 @@ export interface CognitiveMetrics {
   definition_coverage: number
   open_inquiries: number
   pending_predictions: number
+  daily_insights: number
+  unsent_daily_insights: number
+  latest_daily_insight_date: string | null
   active_self_loops: number
   active_fallback_edges: number
   cognitive_cycles: number
@@ -215,4 +219,16 @@ export interface ExternalObservation {
   concept_names: string[]
   reliability: number
   created_at: number
+}
+
+export interface DailyInsight {
+  id: number
+  local_date: string
+  content: string
+  confidence: number
+  source_event_ids: number[]
+  source_cycle_ids: number[]
+  stream_event_id: number
+  created_at: number
+  sent_at: number | null
 }

@@ -16,6 +16,7 @@ const TYPE_CONFIG: Record<ThoughtEvent['type'], { label: string; colorClass: str
   consolidation: { label: 'консолидация', colorClass: 'border-teal/60 text-teal' },
   observation:   { label: 'наблюдение',   colorClass: 'border-text/50 text-text' },
   feedback:      { label: 'исход',        colorClass: 'border-gold/70 text-gold' },
+  daily_insight: { label: 'итог дня',     colorClass: 'border-teal text-teal' },
 }
 
 export default function ThoughtFeed({ initial }: Props) {

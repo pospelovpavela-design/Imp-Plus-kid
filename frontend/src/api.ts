@@ -12,6 +12,7 @@ import type {
   CognitivePrediction,
   SelfModelEntry,
   ExternalObservation,
+  DailyInsight,
 } from './types'
 
 const BASE = ''  // proxied by Vite
@@ -228,6 +229,13 @@ export async function fetchSelfModel(): Promise<SelfModelEntry[]> {
 export async function fetchExternalObservations(): Promise<ExternalObservation[]> {
   const res = await fetch(`${BASE}/mind/observations?limit=30`, { headers: authHeaders() })
   return handleResponse<ExternalObservation[]>(res)
+}
+
+export async function fetchDailyInsights(limit = 30): Promise<DailyInsight[]> {
+  const res = await fetch(`${BASE}/mind/daily-insights?limit=${limit}`, {
+    headers: authHeaders(),
+  })
+  return handleResponse<DailyInsight[]>(res)
 }
 
 export async function addExternalObservation(input: {

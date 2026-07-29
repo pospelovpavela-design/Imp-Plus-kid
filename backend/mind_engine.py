@@ -741,6 +741,85 @@ async def consolidate_memory_batch(
     return await _json_completion(system, prompt, max_tokens=900)
 
 
+# ── Daily synthesis ───────────────────────────────────────────────────────
+
+async def generate_daily_insight_candidate(
+    local_date: str,
+    source_context: str,
+    concept_names: list[str],
+    mind_age: str,
+    connection_count: int,
+    self_context: str,
+) -> dict:
+    system = _build_system(
+        mind_age,
+        len(concept_names),
+        connection_count,
+        concept_names,
+        memory_context=source_context,
+        self_context=self_context,
+    )
+    prompt = f"""Итоговая мысль за локальный день {local_date}.
+
+Сформулируй ровно один главный вывод дня. Он должен следовать только из
+предоставленных событий, принятых критиком гипотез, убеждений и исходов
+прогнозов. Отклонённые гипотезы не выдавай за знание. Если устойчивого нового
+вывода нет, честно сформулируй, какое ограничение собственного рассуждения стало
+яснее. Не перечисляй события, метрики и технические детали.
+
+Верни строго JSON:
+{{
+  "continuation": "<2-4 коротких предложения, продолжающих фразу 'Сегодня за день я понял, что'>",
+  "evidence_event_ids": [1],
+  "evidence_cycle_ids": [1],
+  "confidence": 0.0
+}}"""
+    return await _json_completion(
+        system,
+        prompt,
+        max_tokens=500,
+        models=(MODEL_FAST,),
+    )
+
+
+async def critique_daily_insight_candidate(
+    local_date: str,
+    candidate: dict,
+    source_context: str,
+    concept_names: list[str],
+    mind_age: str,
+    connection_count: int,
+    self_context: str,
+) -> dict:
+    system = _build_system(
+        mind_age,
+        len(concept_names),
+        connection_count,
+        concept_names,
+        memory_context=source_context,
+        self_context=self_context,
+    )
+    prompt = f"""Критическая проверка единственной итоговой мысли за {local_date}.
+
+Кандидат:
+{json.dumps(candidate, ensure_ascii=False)}
+
+Удали всё, что не поддерживается предоставленными данными. Сохрани ровно одну
+связную мысль, а не список. Даже при недостатке подтверждений верни честный итог
+о границе знания. Текст должен грамматически продолжать фразу
+"Сегодня за день я понял, что". Не повторяй эту вводную фразу внутри ответа.
+
+Верни строго JSON:
+{{
+  "continuation": "<проверенное продолжение, 2-4 коротких предложения>",
+  "evidence_event_ids": [1],
+  "evidence_cycle_ids": [1],
+  "confidence": 0.0,
+  "reason": "<какие данные поддерживают итог>"
+}}"""
+    return await _json_completion(system, prompt, max_tokens=500)
+
+
 # ── Connection extraction ─────────────────────────────────────────────────
 
 def extract_connections_from_response(text: str) -> tuple[list[dict], str | None, str | None]:

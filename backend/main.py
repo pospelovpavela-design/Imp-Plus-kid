@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import db
+import daily_insight_engine
 import stream_engine
 import mind_engine
 import auth
@@ -820,6 +821,17 @@ def cognitive_consolidations(limit: int = Query(20, ge=1, le=100)):
             "result": _json_column(row, "result_json", {}),
         }
         for row in db.list_consolidation_runs(limit)
+    ]
+
+
+@app.get("/mind/daily-insights")
+def daily_insights(
+    limit: int = Query(30, ge=1, le=366),
+    offset: int = Query(0, ge=0),
+):
+    return [
+        daily_insight_engine.row_to_dict(row)
+        for row in db.list_daily_insights(limit, offset)
     ]
 
 

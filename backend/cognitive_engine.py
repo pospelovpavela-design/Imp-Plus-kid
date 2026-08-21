@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from collections import Counter
 from typing import Any
@@ -29,6 +30,13 @@ DISCONFIRMED_BELIEF_FACTOR = 0.55
 EXPLORATION_EVERY_DEFAULT = 4
 # Больше вопросов про один и тот же набор концепций не заводим
 MAX_OPEN_INQUIRIES_PER_FOCUS = 12
+# Одно наблюдение не может закрыть весь запас прогнозов
+OBSERVATION_CANDIDATE_LIMIT = 5
+OBSERVATION_MAX_RESOLUTIONS = 3
+# Доля слов свидетельства, которая обязана встретиться в самом наблюдении
+EVIDENCE_QUOTE_RATIO = 0.6
+
+_WORD_RE = re.compile(r"[^\W_]{3,}", flags=re.UNICODE)
 
 
 def _json_list(raw: str | None) -> list:
@@ -520,6 +528,20 @@ def apply_prediction_outcome(
     }
 
 
+def _evidence_is_quoted(evidence: str, observation: str) -> bool:
+    """Свидетельство должно быть взято из наблюдения, а не пересказывать прогноз.
+
+    Без этой проверки модель охотно закрывает весь запас прогнозов по одной
+    лишь общности темы, подставляя вместо цитаты собственную интерпретацию.
+    """
+    tokens = _WORD_RE.findall(evidence.casefold())
+    if not tokens:
+        return False
+    source = set(_WORD_RE.findall(observation.casefold()))
+    hits = sum(1 for token in tokens if token in source)
+    return hits / len(tokens) >= EVIDENCE_QUOTE_RATIO
+
+
 async def resolve_predictions_with_observation(
     observation: str,
     source: str,
@@ -529,7 +551,9 @@ async def resolve_predictions_with_observation(
 ) -> list[dict]:
     """Проверить открытые прогнозы пришедшим наблюдением."""
     now = time.time()
-    candidates = db.list_pending_predictions_for_concepts(concept_names, now)
+    candidates = db.list_pending_predictions_for_concepts(
+        concept_names, now, limit=OBSERVATION_CANDIDATE_LIMIT
+    )
     if not candidates:
         return []
     available_names = graph.relevant_names(concept_names, limit=36) or graph.all_names()
@@ -556,13 +580,19 @@ async def resolve_predictions_with_observation(
         prediction = by_id.get(prediction_id)
         if prediction is None or outcome not in {"confirmed", "disconfirmed"}:
             continue
-        if not evidence:
-            evidence = f"Наблюдение ({source}): {observation}"[:1000]
+        if not _evidence_is_quoted(evidence, observation):
+            logger.info(
+                "Prediction %d left open: evidence is not taken from the observation",
+                prediction_id,
+            )
+            continue
         payload = apply_prediction_outcome(
             prediction, outcome, evidence, born_at, now=now
         )
         if payload is not None:
             events.append(payload)
+        if len(events) >= OBSERVATION_MAX_RESOLUTIONS:
+            break
     if events:
         logger.info("Observation resolved %d prediction(s)", len(events))
     return events

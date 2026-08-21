@@ -58,3 +58,23 @@ def resolve(
         if best - runner_up < margin:
             return None
     return index[matches[0]]
+
+
+def closest(name: str, index: dict[str, str], limit: int = 4) -> list[str]:
+    """Ближайшие имена графа — для подсказки, когда сопоставить не удалось.
+
+    В отличие от resolve здесь порог мягкий: подсказка ничего не решает, она
+    лишь показывает, что в графе вообще есть рядом.
+    """
+    key = normalize(name)
+    if not key:
+        return []
+    scored = sorted(
+        (
+            (difflib.SequenceMatcher(None, key, candidate).ratio(), original)
+            for candidate, original in index.items()
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    return [original for ratio, original in scored[:limit] if ratio >= 0.3]

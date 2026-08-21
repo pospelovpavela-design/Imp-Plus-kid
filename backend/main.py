@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 import cognitive_engine
 import db
+import name_matching
 import daily_insight_engine
 import stream_engine
 import mind_engine
@@ -232,25 +233,44 @@ def _combine_contexts(*contexts: str) -> str:
     return "\n\n".join(c for c in contexts if c.strip())
 
 
-def _canonical_concept_names(names: list[str]) -> list[str]:
-    canonical: list[str] = []
+def _lookup_concepts(names: list[str]) -> tuple[list, list[str]]:
+    """Имена, введённые человеком → концепции графа, плюс список ненайденных."""
+    index = name_matching.build_index(row["name"] for row in db.list_concepts())
+    found = []
     missing: list[str] = []
     for raw_name in names:
         name = raw_name.strip()
         if not name:
             continue
-        concept = db.get_concept_by_name(name) or db.get_concept_by_name_normalized(name)
-        if concept:
-            if concept["name"] not in canonical:
-                canonical.append(concept["name"])
-        else:
+        resolved = name_matching.resolve(name, index)
+        concept = db.get_concept_by_name(resolved) if resolved else None
+        if concept is None:
+            concept = db.get_concept_by_name(name) or db.get_concept_by_name_normalized(name)
+        if concept is None:
             missing.append(name)
+        elif all(concept["id"] != item["id"] for item in found):
+            found.append(concept)
+    return found, missing
+
+
+def _missing_concepts_error(missing: list[str]) -> HTTPException:
+    """Ненайденные имена — с подсказкой, что в графе есть рядом."""
+    index = name_matching.build_index(row["name"] for row in db.list_concepts())
+    suggestions: list[str] = []
+    for name in missing:
+        suggestions.extend(name_matching.closest(name, index))
+    hint = ", ".join(dict.fromkeys(suggestions))
+    detail = f"Концепции не найдены: {', '.join(missing)}"
+    if hint:
+        detail += f". Похожие: {hint}"
+    return HTTPException(status_code=404, detail=detail)
+
+
+def _canonical_concept_names(names: list[str]) -> list[str]:
+    found, missing = _lookup_concepts(names)
     if missing:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Концепции не найдены: {', '.join(missing)}",
-        )
-    return canonical
+        raise _missing_concepts_error(missing)
+    return [concept["name"] for concept in found]
 
 
 def _json_column(row, column: str, fallback):
@@ -453,23 +473,9 @@ async def add_grounding_excerpt(body: GroundingExcerptBody, _=Depends(auth.requi
             detail=f"Фрагмент не должен превышать {MAX_GROUNDING_EXCERPT_CHARS} символов",
         )
 
-    concepts = []
-    missing = []
-    for name in concept_names:
-        concept = db.get_concept_by_name(name) or db.get_concept_by_name_normalized(name)
-        if concept:
-            concepts.append(concept)
-        else:
-            missing.append(name)
+    concepts, missing = _lookup_concepts(concept_names)
     if missing:
-        suggestions: list[str] = []
-        for name in missing:
-            suggestions.extend(r["name"] for r in db.find_concepts_by_name_fragment(name))
-        suffix = f". Похожие: {', '.join(dict.fromkeys(suggestions))}" if suggestions else ""
-        raise HTTPException(
-            status_code=404,
-            detail=f"Концепции не найдены: {', '.join(missing)}{suffix}",
-        )
+        raise _missing_concepts_error(missing)
 
     state = db.get_mind_state()
     td = get_time_display(state["born_at"])

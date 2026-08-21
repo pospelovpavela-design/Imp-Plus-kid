@@ -181,7 +181,7 @@ async def analyze_concept_stream(
 ```json
 {{
   "connections": [
-    {{"concept": "<имя>", "relationship": "<тип>", "strength": 0.0}}
+    {{"concept": "<имя>", "relationship": "<тип>", "strength": <0.1-1.0>}}
   ],
   "custom_label": "<ярлык или null>",
   "neologism": "<новое слово или null>"
@@ -323,7 +323,7 @@ async def synthesize_working_definitions(
       "concept": "<точное имя концепции из списка>",
       "definition": "<1-2 предложения рабочего определения>",
       "tension": "<противоречие или напряжение, если есть; иначе null>",
-      "confidence": 0.0
+      "confidence": <0.0-1.0>
     }}
   ]
 }}"""
@@ -397,7 +397,7 @@ async def analyze_grounding_excerpt(
       "concept": "<точное имя концепции из concept_links>",
       "definition": "<1-2 предложения рабочего определения после переработки фрагмента>",
       "tension": "<противоречие или напряжение, если есть; иначе null>",
-      "confidence": 0.0
+      "confidence": <0.0-1.0>
     }}
   ]
 }}"""
@@ -674,6 +674,9 @@ async def generate_cognitive_candidate(
 Прогноз должен указывать способ будущей проверки и срок в сутках (horizon_days,
 целое от 1 до 30), за который проверка возможна. Если проверяемого прогноза нет,
 верни null. Не создавай связь только потому, что две концепции были выбраны вместе.
+Числовые поля заполняй собственной оценкой от 0.0 до 1.0, угловые скобки в шаблоне
+не значение, а место для него. Ноль означает отсутствие связи: связь с нулевой
+силой или нулевой уверенностью не предлагай вовсе, лучше верни пустой список.
 
 Верни строго JSON:
 {{
@@ -684,8 +687,8 @@ async def generate_cognitive_candidate(
       "source": "<точное имя концепции>",
       "target": "<точное имя концепции>",
       "relationship": "<конкретный тип отношения>",
-      "strength": 0.0,
-      "confidence": 0.0
+      "strength": <0.0-1.0>,
+      "confidence": <0.0-1.0>
     }}
   ],
   "uncertainty": "<что остаётся неизвестным>",
@@ -694,7 +697,7 @@ async def generate_cognitive_candidate(
     "statement": "<что ожидается>",
     "test_method": "<какое наблюдение подтвердит или опровергнет>",
     "horizon_days": 7,
-    "confidence": 0.0
+    "confidence": <0.0-1.0>
   }}
 }}"""
     data = await _json_completion(
@@ -740,19 +743,24 @@ async def critique_cognitive_candidate(
 вывод. Совместное появление слов не доказывает отношение. Спекулятивную, но полезную
 мысль помечай needs_evidence и не разрешай ей менять граф.
 
+Числовые поля — собственная оценка от 0.0 до 1.0, угловые скобки в шаблоне не
+значение, а место для него. В accepted_relations оставляй только связи, за которые
+готов поручиться: их сила и уверенность строго больше нуля. Связь с нулевой
+уверенностью не принимай — исключи её из списка.
+
 Верни строго JSON:
 {{
   "verdict": "accept|revise|needs_evidence|reject",
   "reason": "<краткое обоснование>",
-  "reliability": 0.0,
+  "reliability": <0.0-1.0>,
   "revised_observation": "<уточнённая формулировка или null>",
   "accepted_relations": [
     {{
       "source": "<точное имя концепции>",
       "target": "<точное имя концепции>",
       "relationship": "<тип>",
-      "strength": 0.0,
-      "confidence": 0.0,
+      "strength": <0.0-1.0>,
+      "confidence": <0.0-1.0>,
       "reason": "<опора>"
     }}
   ],
@@ -804,7 +812,7 @@ async def consolidate_memory_batch(
     {{
       "statement": "<устойчивое утверждение>",
       "concept_names": ["<точное имя>"],
-      "confidence": 0.0,
+      "confidence": <0.0-1.0>,
       "evidence_event_ids": [1]
     }}
   ],
@@ -812,7 +820,7 @@ async def consolidate_memory_batch(
     {{
       "question": "<неразрешённый проверяемый вопрос>",
       "concept_names": ["<точное имя>"],
-      "priority": 0.0
+      "priority": <0.0-1.0>
     }}
   ]
 }}"""
@@ -850,7 +858,7 @@ async def generate_daily_insight_candidate(
   "continuation": "<2-4 коротких предложения, продолжающих фразу 'Сегодня за день я понял, что'>",
   "evidence_event_ids": [1],
   "evidence_cycle_ids": [1],
-  "confidence": 0.0
+  "confidence": <0.0-1.0>
 }}"""
     return await _json_completion(
         system,
@@ -892,7 +900,7 @@ async def critique_daily_insight_candidate(
   "continuation": "<проверенное продолжение, 2-4 коротких предложения>",
   "evidence_event_ids": [1],
   "evidence_cycle_ids": [1],
-  "confidence": 0.0,
+  "confidence": <0.0-1.0>,
   "reason": "<какие данные поддерживают итог>"
 }}"""
     return await _json_completion(system, prompt, max_tokens=500)

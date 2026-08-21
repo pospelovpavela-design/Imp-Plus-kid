@@ -35,6 +35,8 @@ OBSERVATION_CANDIDATE_LIMIT = 5
 OBSERVATION_MAX_RESOLUTIONS = 3
 # Доля слов свидетельства, которая обязана встретиться в самом наблюдении
 EVIDENCE_QUOTE_RATIO = 0.6
+# Меньше этого числа имён рабочий набор цикла вырождается
+MIN_WORKING_NAMES = 12
 # Отбор связей: как часто, сколько связей за раз, сколько соседей у концепции
 GRAPH_SELECTION_INTERVAL_DEFAULT = 86400
 GRAPH_SELECTION_BUDGET_DEFAULT = 60
@@ -117,6 +119,41 @@ def _explore_focus(graph: Any, now: float) -> list[str]:
         return [first, second]
     pair = graph.random_two_concepts()
     return [pair[0]["name"], pair[1]["name"]] if pair else []
+
+
+def _working_names(
+    graph: Any,
+    focus_names: list[str],
+    remembered: list[str],
+    limit: int = 36,
+) -> list[str]:
+    """Имена, с которыми цикл работает.
+
+    Соседей может не быть вовсе: концепция бывает изолированной, и тогда набор
+    вырождается в одно имя, а требование «связывай только имена из списка»
+    становится невыполнимым. Добираем тем, что упоминалось рядом в памяти, затем
+    наименее заземлёнными концепциями — там структуры меньше всего.
+    """
+    names = list(
+        dict.fromkeys(graph.relevant_names(focus_names, limit=limit) or focus_names)
+    )
+    if len(names) >= MIN_WORKING_NAMES:
+        return names
+
+    index = name_matching.build_index(graph.all_names())
+    for raw in remembered:
+        resolved = name_matching.resolve(raw, index)
+        if resolved is not None and resolved not in names:
+            names.append(resolved)
+        if len(names) >= limit:
+            return names
+
+    for row in db.list_concepts_needing_grounding(limit=limit):
+        if len(names) >= MIN_WORKING_NAMES:
+            break
+        if row["name"] not in names:
+            names.append(row["name"])
+    return names
 
 
 def _prediction_horizon_seconds(raw: Any) -> float:
@@ -228,9 +265,7 @@ async def run_cycle(
     memories = memory_engine.retrieve_memories(query, focus_names, limit=8, now=now)
     self_context = memory_engine.build_self_context()
     groundings = _grounding_context(focus_names)
-    available_names = graph.relevant_names(focus_names, limit=36)
-    if not available_names:
-        available_names = focus_names
+    available_names = _working_names(graph, focus_names, memories.concept_names)
     td = get_time_display(born_at)
 
     candidate = await mind_engine.generate_cognitive_candidate(
@@ -297,7 +332,10 @@ async def run_cycle(
         cycle_id=cycle_id,
     )
 
-    name_index = name_matching.build_index(available_names)
+    # Сопоставляем по всему графу, а не по рабочему набору: концепция, названная
+    # по памяти, существует, и терять связь из-за того, что её не показали, — та
+    # же немая потеря, ради которой всё это чинилось.
+    name_index = name_matching.build_index(graph.all_names())
     unresolved: list[str] = []
 
     def lookup(raw: Any) -> Any:

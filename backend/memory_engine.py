@@ -38,6 +38,7 @@ def _evidence_types() -> tuple[str, ...] | None:
 class MemoryContext:
     event_ids: list[int]
     text: str
+    concept_names: list[str]
 
 
 def _tokens(text: str, limit: int = 10) -> list[str]:
@@ -112,8 +113,11 @@ def retrieve_memories(
     selected = [row for _, row in sorted(scored, key=lambda item: item[0], reverse=True)[:limit]]
     lines = []
     event_ids = []
+    mentioned: dict[str, int] = {}
     for row in selected:
         event_ids.append(int(row["id"]))
+        for name in _concepts(row["concepts_involved"]):
+            mentioned[name] = mentioned.get(name, 0) + 1
         content = " ".join(str(row["content"]).split())
         if len(content) > 600:
             content = content[:597].rstrip() + "..."
@@ -133,9 +137,16 @@ def retrieve_memories(
                 f"(надёжность {float(row['reliability']):.2f}): {content[:600]}"
             )
 
+    for row in observations:
+        for name in _concepts(row["concept_names"]):
+            mentioned[name] = mentioned.get(name, 0) + 1
+
     return MemoryContext(
         event_ids=event_ids,
         text="\n".join(lines) if lines else "Релевантных эпизодов памяти не найдено.",
+        concept_names=[
+            name for name, _ in sorted(mentioned.items(), key=lambda item: -item[1])
+        ],
     )
 
 

@@ -576,11 +576,13 @@ async def resolve_predictions_with_observation(
         except (TypeError, ValueError):
             continue
         outcome = str(match.get("outcome") or "").strip().casefold()
-        evidence = " ".join(str(match.get("evidence") or "").split()).strip()
+        quote = " ".join(str(match.get("quote") or match.get("evidence") or "").split())
+        reason = " ".join(str(match.get("reason") or "").split()).strip()
+        evidence = f"«{quote}» {reason}".strip() if reason else quote
         prediction = by_id.get(prediction_id)
         if prediction is None or outcome not in {"confirmed", "disconfirmed"}:
             continue
-        if not _evidence_is_quoted(evidence, observation):
+        if not _evidence_is_quoted(quote, observation):
             logger.info(
                 "Prediction %d left open: evidence is not taken from the observation",
                 prediction_id,

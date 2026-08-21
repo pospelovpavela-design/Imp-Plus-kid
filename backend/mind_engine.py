@@ -467,6 +467,48 @@ strength: 0.1–1.0. Имена только из: {names_str}"""
     return response.choices[0].message.content
 
 
+async def match_observation_to_predictions(
+    observation: str,
+    source: str,
+    predictions: list[dict],
+    existing_names: list[str],
+    mind_age: str,
+    connection_count: int = 0,
+) -> dict:
+    """Сопоставить внешнее наблюдение с открытыми прогнозами."""
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    listing = "\n".join(
+        f"#{item['id']}: {item['statement']} Способ проверки: {item['test_method']}"
+        for item in predictions
+    )
+    prompt = f"""Пришло внешнее наблюдение.
+
+Источник: {source}
+Наблюдение: {observation}
+
+Открытые прогнозы:
+{listing}
+
+Для каждого прогноза реши, говорит ли наблюдение о нём что-то определённое.
+Не притягивай наблюдение к прогнозу по общей теме: совпадения предмета мало,
+нужно совпадение проверяемого утверждения. Если наблюдение не относится к
+способу проверки прогноза — выбирай inconclusive.
+
+Верни строго JSON:
+{{
+  "matches": [
+    {{
+      "prediction_id": 0,
+      "outcome": "confirmed | disconfirmed | inconclusive",
+      "evidence": "<фрагмент наблюдения, на котором основан вывод>"
+    }}
+  ]
+}}"""
+    data = await _json_completion(system, prompt, max_tokens=900)
+    matches = data.get("matches")
+    return {"matches": matches if isinstance(matches, list) else []}
+
+
 # ── Milestone reflection ──────────────────────────────────────────────────
 
 async def generate_milestone_reflection(
@@ -623,7 +665,8 @@ async def generate_cognitive_candidate(
 
 Не изображай уверенность. Отдели наблюдаемое в памяти от предположения.
 Связь разрешено предложить только между точными именами концепций из списка.
-Прогноз должен указывать способ будущей проверки. Если проверяемого прогноза нет,
+Прогноз должен указывать способ будущей проверки и срок в сутках (horizon_days,
+целое от 1 до 30), за который проверка возможна. Если проверяемого прогноза нет,
 верни null. Не создавай связь только потому, что две концепции были выбраны вместе.
 
 Верни строго JSON:
@@ -644,6 +687,7 @@ async def generate_cognitive_candidate(
   "prediction": {{
     "statement": "<что ожидается>",
     "test_method": "<какое наблюдение подтвердит или опровергнет>",
+    "horizon_days": 7,
     "confidence": 0.0
   }}
 }}"""

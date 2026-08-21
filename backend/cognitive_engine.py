@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import time
 from collections import Counter
 from typing import Any
@@ -16,6 +17,18 @@ import name_matching
 from time_engine import format_mind_timestamp, get_time_display
 
 logger = logging.getLogger("cognitive_engine")
+
+DEFAULT_PREDICTION_HORIZON_DAYS = 7.0
+MIN_PREDICTION_HORIZON_DAYS = 1.0
+MAX_PREDICTION_HORIZON_DAYS = 30.0
+# Истёкший прогноз — не опровержение, поэтому убеждение слабеет мягко
+EXPIRED_BELIEF_FACTOR = 0.85
+# Опровержение внешним наблюдением бьёт по убеждению заметно сильнее
+DISCONFIRMED_BELIEF_FACTOR = 0.55
+# Каждый N-й цикл выбирает фокус в обход очереди вопросов
+EXPLORATION_EVERY_DEFAULT = 4
+# Больше вопросов про один и тот же набор концепций не заводим
+MAX_OPEN_INQUIRIES_PER_FOCUS = 12
 
 
 def _json_list(raw: str | None) -> list:
@@ -47,8 +60,71 @@ def _grounding_context(names: list[str], limit: int = 6) -> str:
     return "\n".join(lines)
 
 
+def _positive_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _exploration_due(now: float) -> bool:
+    """Каждый N-й цикл идёт в обход очереди вопросов.
+
+    Очередь кормит сама себя: каждый цикл заводит новые вопросы с теми же
+    именами, поэтому без принудительной квоты исследование не запускается
+    никогда — случайная пара выбиралась только при пустой очереди.
+    """
+    every = _positive_env("COGNITIVE_EXPLORATION_EVERY", EXPLORATION_EVERY_DEFAULT)
+    raw = db.get_cognitive_state("cycle_counter")
+    try:
+        counter = int(raw or 0) + 1
+    except ValueError:
+        counter = 1
+    db.set_cognitive_state("cycle_counter", str(counter), now)
+    return counter % every == 0
+
+
+def _explore_focus(graph: Any, now: float) -> list[str]:
+    """Пара концепций для исследования: приоритет наименее заземлённым."""
+    known = name_matching.build_index(graph.all_names())
+    pool: list[str] = []
+    for row in db.list_concepts_needing_grounding(limit=60):
+        resolved = name_matching.resolve(row["name"], known)
+        if resolved is not None and resolved not in pool:
+            pool.append(resolved)
+    if len(pool) >= 2:
+        raw = db.get_cognitive_state("exploration_cursor")
+        try:
+            cursor = int(raw or 0)
+        except ValueError:
+            cursor = 0
+        first = pool[cursor % len(pool)]
+        db.set_cognitive_state("exploration_cursor", str((cursor + 1) % len(pool)), now)
+        second = random.choice([name for name in pool if name != first])
+        return [first, second]
+    pair = graph.random_two_concepts()
+    return [pair[0]["name"], pair[1]["name"]] if pair else []
+
+
+def _prediction_horizon_seconds(raw: Any) -> float:
+    """Срок проверки в секундах. Без срока прогноз нельзя ни закрыть, ни опровергнуть."""
+    try:
+        days = float(raw)
+    except (TypeError, ValueError):
+        days = DEFAULT_PREDICTION_HORIZON_DAYS
+    days = max(MIN_PREDICTION_HORIZON_DAYS, min(MAX_PREDICTION_HORIZON_DAYS, days))
+    return days * 86400.0
+
+
 def initialize(now: float | None = None) -> None:
     memory_engine.initialize_self_model(now)
+    filled = db.backfill_prediction_deadlines(
+        now or time.time(),
+        _prediction_horizon_seconds(DEFAULT_PREDICTION_HORIZON_DAYS),
+    )
+    if filled:
+        logger.info("Assigned a verification deadline to %d older prediction(s)", filled)
 
 
 def _seed_inquiry(now: float) -> None:
@@ -92,6 +168,12 @@ def _resolve_names(raw: Any, index: dict[str, str]) -> list[str]:
 
 
 def _select_focus(graph: Any, inquiry: Any | None, now: float) -> tuple[list[str], Any | None]:
+    if _exploration_due(now):
+        explored = _explore_focus(graph, now)
+        if len(explored) >= 2:
+            logger.info("Exploration cycle: focus %s", " ↔ ".join(explored))
+            return explored, None
+
     if inquiry is None:
         _seed_inquiry(now)
         inquiry = db.get_next_inquiry(now)
@@ -288,24 +370,36 @@ async def run_cycle(
             top,
         )
 
-    next_question = candidate.get("next_question")
-    if isinstance(next_question, str) and next_question.strip():
-        db.create_inquiry(
-            next_question,
-            focus_names,
-            0.65 if verdict == "needs_evidence" else 0.5,
-            "cognitive_cycle",
-            now,
+    open_for_focus = db.count_open_inquiries_for_concepts(focus_names)
+    if open_for_focus >= MAX_OPEN_INQUIRIES_PER_FOCUS:
+        logger.info(
+            "Focus %s already has %d open inquiries; not adding more",
+            focus,
+            open_for_focus,
         )
-    for contradiction in critique.get("contradictions") or []:
-        if isinstance(contradiction, str) and contradiction.strip():
+    else:
+        next_question = candidate.get("next_question")
+        if isinstance(next_question, str) and next_question.strip():
             db.create_inquiry(
-                f"Как проверить противоречие: {contradiction.strip()}",
+                next_question,
                 focus_names,
-                0.8,
-                "critic_contradiction",
+                0.65 if verdict == "needs_evidence" else 0.5,
+                "cognitive_cycle",
                 now,
             )
+            open_for_focus += 1
+        for contradiction in critique.get("contradictions") or []:
+            if open_for_focus >= MAX_OPEN_INQUIRIES_PER_FOCUS:
+                break
+            if isinstance(contradiction, str) and contradiction.strip():
+                db.create_inquiry(
+                    f"Как проверить противоречие: {contradiction.strip()}",
+                    focus_names,
+                    0.8,
+                    "critic_contradiction",
+                    now,
+                )
+                open_for_focus += 1
 
     prediction = candidate.get("prediction")
     prediction_id = None
@@ -324,6 +418,9 @@ async def run_cycle(
                 confidence,
                 now,
                 cycle_id=cycle_id,
+                expected_by=now + _prediction_horizon_seconds(
+                    prediction.get("horizon_days")
+                ),
             )
 
     if inquiry is not None:
@@ -349,6 +446,172 @@ async def run_cycle(
         "accepted_relations": len(accepted_pairs),
         "unresolved_names": len(unresolved),
     }
+
+
+def _weaken_beliefs_behind(prediction: Any, factor: float, event_id: int, now: float) -> int:
+    """Ослабить убеждения, опирающиеся на цикл, который породил прогноз."""
+    cycle_id = prediction["cycle_id"]
+    if cycle_id is None:
+        return 0
+    source_event_id = db.get_cycle_event_id(int(cycle_id))
+    if source_event_id is None:
+        return 0
+    weakened = 0
+    for belief in db.list_beliefs_supported_by_event(source_event_id):
+        db.weaken_belief(
+            int(belief["id"]),
+            factor,
+            now,
+            counterevidence_event_id=event_id,
+        )
+        weakened += 1
+    return weakened
+
+
+def apply_prediction_outcome(
+    prediction: Any,
+    outcome: str,
+    evidence: str,
+    born_at: float,
+    *,
+    now: float | None = None,
+) -> dict | None:
+    """Закрыть прогноз с исходом: обратная связь, вопрос при опровержении, правка убеждений.
+
+    Возвращает событие потока для рассылки или None, если прогноз уже закрыт.
+    """
+    now = now or time.time()
+    prediction_id = int(prediction["id"])
+    if not db.resolve_prediction(prediction_id, outcome, evidence, now):
+        return None
+    names = _json_list(prediction["concept_names"])
+    mind_time = format_mind_timestamp(born_at, now)
+    content = f"Прогноз #{prediction_id}: {outcome}. Свидетельство: {evidence}"
+    event_id = db.insert_stream_event(
+        mind_time,
+        "feedback",
+        content,
+        names,
+        now,
+        salience=1.0,
+        reliability=0.95,
+    )
+    if outcome == "disconfirmed":
+        db.create_inquiry(
+            f"Почему был опровергнут прогноз: {prediction['statement']}?",
+            names,
+            0.95,
+            "prediction_disconfirmed",
+            now,
+        )
+        weakened = _weaken_beliefs_behind(
+            prediction, DISCONFIRMED_BELIEF_FACTOR, event_id, now
+        )
+        logger.info(
+            "Prediction %d disconfirmed; weakened %d belief(s)", prediction_id, weakened
+        )
+    return {
+        "id": event_id,
+        "mind_time": mind_time,
+        "type": "feedback",
+        "content": content,
+        "concepts_involved": names,
+        "created_at": now,
+    }
+
+
+async def resolve_predictions_with_observation(
+    observation: str,
+    source: str,
+    concept_names: list[str],
+    graph: Any,
+    born_at: float,
+) -> list[dict]:
+    """Проверить открытые прогнозы пришедшим наблюдением."""
+    now = time.time()
+    candidates = db.list_pending_predictions_for_concepts(concept_names, now)
+    if not candidates:
+        return []
+    available_names = graph.relevant_names(concept_names, limit=36) or graph.all_names()
+    td = get_time_display(born_at)
+    result = await mind_engine.match_observation_to_predictions(
+        observation,
+        source,
+        [dict(row) for row in candidates],
+        available_names,
+        td.mind_age_human,
+        graph.edge_count(),
+    )
+    by_id = {int(row["id"]): row for row in candidates}
+    events: list[dict] = []
+    for match in result.get("matches") or []:
+        if not isinstance(match, dict):
+            continue
+        try:
+            prediction_id = int(match.get("prediction_id"))
+        except (TypeError, ValueError):
+            continue
+        outcome = str(match.get("outcome") or "").strip().casefold()
+        evidence = " ".join(str(match.get("evidence") or "").split()).strip()
+        prediction = by_id.get(prediction_id)
+        if prediction is None or outcome not in {"confirmed", "disconfirmed"}:
+            continue
+        if not evidence:
+            evidence = f"Наблюдение ({source}): {observation}"[:1000]
+        payload = apply_prediction_outcome(
+            prediction, outcome, evidence, born_at, now=now
+        )
+        if payload is not None:
+            events.append(payload)
+    if events:
+        logger.info("Observation resolved %d prediction(s)", len(events))
+    return events
+
+
+def expire_predictions(born_at: float) -> list[dict]:
+    """Закрыть прогнозы с вышедшим сроком и ослабить опирающиеся на них убеждения.
+
+    Истечение — единственный сигнал ошибки, доступный без внешних наблюдений:
+    он наказывает не неверное предсказание, а непроверяемое.
+    """
+    now = time.time()
+    events: list[dict] = []
+    for prediction in db.list_expired_predictions(now):
+        prediction_id = int(prediction["id"])
+        if not db.expire_prediction(prediction_id, now):
+            continue
+        names = _json_list(prediction["concept_names"])
+        mind_time = format_mind_timestamp(born_at, now)
+        content = (
+            f"Прогноз #{prediction_id} истёк без проверки: {prediction['statement']} "
+            f"Проверка не была применена: {prediction['test_method']}"
+        )
+        event_id = db.insert_stream_event(
+            mind_time,
+            "feedback",
+            content,
+            names,
+            now,
+            salience=0.7,
+            reliability=0.6,
+        )
+        weakened = _weaken_beliefs_behind(
+            prediction, EXPIRED_BELIEF_FACTOR, event_id, now
+        )
+        logger.info(
+            "Prediction %d expired unverified; weakened %d belief(s)",
+            prediction_id,
+            weakened,
+        )
+        events.append({
+            "id": event_id,
+            "mind_time": mind_time,
+            "type": "feedback",
+            "content": content,
+            "concepts_involved": names,
+            "created_at": now,
+        })
+    return events
 
 
 async def maybe_consolidate(graph: Any, born_at: float) -> dict | None:

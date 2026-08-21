@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+import cognitive_engine
 import db
 import daily_insight_engine
 import stream_engine
@@ -864,7 +865,18 @@ async def add_cognitive_observation(
         salience=0.9,
         reliability=body.reliability,
     )
-    return {"id": observation_id, "event_id": event_id}
+    resolved: list[int] = []
+    try:
+        state = db.get_mind_state()
+        for payload in await cognitive_engine.resolve_predictions_with_observation(
+            content, source, concept_names, graph, state["born_at"]
+        ):
+            await stream_engine.broadcast(payload)
+            resolved.append(int(payload["id"]))
+    except Exception as exc:
+        # Наблюдение уже сохранено: сбой сверки не должен его отменять
+        print(f"[IMPLUS] Prediction matching failed: {exc}")
+    return {"id": observation_id, "event_id": event_id, "feedback_event_ids": resolved}
 
 
 @app.post("/mind/predictions/{prediction_id}/resolve")
@@ -882,25 +894,13 @@ async def resolve_cognitive_prediction(
     prediction = db.get_prediction(prediction_id)
     if prediction is None:
         raise HTTPException(status_code=404, detail="Прогноз не найден")
-    now = time.time()
-    if not db.resolve_prediction(prediction_id, outcome, evidence, now):
-        raise HTTPException(status_code=409, detail="Прогноз уже закрыт")
-    concept_names = _json_column(prediction, "concept_names", [])
-    await stream_engine.push_external_event(
-        "feedback",
-        f"Прогноз #{prediction_id}: {outcome}. Свидетельство: {evidence}",
-        concept_names,
-        salience=1.0,
-        reliability=0.95,
+    state = db.get_mind_state()
+    payload = cognitive_engine.apply_prediction_outcome(
+        prediction, outcome, evidence, state["born_at"]
     )
-    if outcome == "disconfirmed":
-        db.create_inquiry(
-            f"Почему был опровергнут прогноз: {prediction['statement']}?",
-            concept_names,
-            0.95,
-            "prediction_disconfirmed",
-            now,
-        )
+    if payload is None:
+        raise HTTPException(status_code=409, detail="Прогноз уже закрыт")
+    await stream_engine.broadcast(payload)
     return {"id": prediction_id, "status": "resolved", "outcome": outcome}
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import os
 import re
 import time
 
@@ -12,6 +13,25 @@ import db
 
 
 _WORD_RE = re.compile(r"[^\W_]{3,}", flags=re.UNICODE)
+
+# Старый спонтанный поток — 96% всех событий и почти весь шум. Он остаётся в
+# истории и в полнотекстовом поиске, но свидетельством для критика не служит:
+# критик, читая свободную ассоциацию, справедливо отвечает «доказательств нет».
+EVIDENCE_TYPES: tuple[str, ...] = (
+    "cognitive",
+    "consolidation",
+    "observation",
+    "feedback",
+    "contemplation",
+    "reaction",
+    "milestone",
+)
+
+
+def _evidence_types() -> tuple[str, ...] | None:
+    """None означает «брать события любого типа»."""
+    flag = os.environ.get("MEMORY_INCLUDE_SPONTANEOUS", "").strip().casefold()
+    return None if flag in {"1", "true", "yes"} else EVIDENCE_TYPES
 
 
 @dataclass
@@ -50,9 +70,10 @@ def retrieve_memories(
 ) -> MemoryContext:
     now = now or time.time()
     terms = list(dict.fromkeys([*concept_names, *_tokens(query)]))
-    candidates = db.search_memory_events(terms, limit=max(40, limit * 5))
+    types = _evidence_types()
+    candidates = db.search_memory_events(terms, limit=max(40, limit * 5), types=types)
     by_id = {int(row["id"]): row for row in candidates}
-    for row in db.list_recent_high_quality_events(limit=20):
+    for row in db.list_recent_high_quality_events(limit=20, types=types):
         by_id.setdefault(int(row["id"]), row)
 
     focus = {name.casefold() for name in concept_names}

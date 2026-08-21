@@ -940,7 +940,20 @@ def get_last_autonomous_time() -> float | None:
 
 # ── Cognitive memory and evaluation ───────────────────────────────────────
 
-def search_memory_events(terms: list[str], limit: int = 40) -> list[dict]:
+def _type_clause(types: tuple[str, ...] | None, alias: str = "") -> str:
+    """Фрагмент SQL, ограничивающий выборку типами событий."""
+    if not types:
+        return ""
+    prefix = f"{alias}." if alias else ""
+    placeholders = ", ".join("?" for _ in types)
+    return f"AND {prefix}type IN ({placeholders})"
+
+
+def search_memory_events(
+    terms: list[str],
+    limit: int = 40,
+    types: tuple[str, ...] | None = None,
+) -> list[dict]:
     cleaned = [" ".join(term.split()).strip() for term in terms if term.strip()]
     rows: list[dict] = []
     if cleaned:
@@ -952,13 +965,14 @@ def search_memory_events(terms: list[str], limit: int = 40) -> list[dict]:
                 rows = [
                     dict(row)
                     for row in conn.execute(
-                        """SELECT ts.*, bm25(thought_memory_fts) AS lexical_rank
-                           FROM thought_memory_fts
-                           JOIN thought_stream ts ON ts.id = thought_memory_fts.rowid
-                           WHERE thought_memory_fts MATCH ?
-                           ORDER BY lexical_rank
-                           LIMIT ?""",
-                        (match_query, limit),
+                        f"""SELECT ts.*, bm25(thought_memory_fts) AS lexical_rank
+                            FROM thought_memory_fts
+                            JOIN thought_stream ts ON ts.id = thought_memory_fts.rowid
+                            WHERE thought_memory_fts MATCH ?
+                              {_type_clause(types, 'ts')}
+                            ORDER BY lexical_rank
+                            LIMIT ?""",
+                        (match_query, *(types or ()), limit),
                     ).fetchall()
                 ]
         except sqlite3.OperationalError:
@@ -973,26 +987,31 @@ def search_memory_events(terms: list[str], limit: int = 40) -> list[dict]:
                 for row in conn.execute(
                     f"""SELECT *, 0.0 AS lexical_rank
                         FROM thought_stream
-                        WHERE {clauses}
+                        WHERE ({clauses})
+                          {_type_clause(types)}
                         ORDER BY created_at DESC
                         LIMIT ?""",
-                    (*params, limit),
+                    (*params, *(types or ()), limit),
                 ).fetchall()
             ]
     return rows
 
 
-def list_recent_high_quality_events(limit: int = 20) -> list[dict]:
+def list_recent_high_quality_events(
+    limit: int = 20,
+    types: tuple[str, ...] | None = None,
+) -> list[dict]:
     with get_conn() as conn:
         return [
             dict(row)
             for row in conn.execute(
-                """SELECT *, 0.0 AS lexical_rank
-                   FROM thought_stream
-                   WHERE reliability >= 0.55 OR salience >= 0.7
-                   ORDER BY created_at DESC
-                   LIMIT ?""",
-                (limit,),
+                f"""SELECT *, 0.0 AS lexical_rank
+                    FROM thought_stream
+                    WHERE (reliability >= 0.55 OR salience >= 0.7)
+                      {_type_clause(types)}
+                    ORDER BY created_at DESC
+                    LIMIT ?""",
+                (*(types or ()), limit),
             ).fetchall()
         ]
 
@@ -1125,6 +1144,35 @@ def get_next_inquiry(now: float) -> sqlite3.Row | None:
                LIMIT 1""",
             (now,),
         ).fetchone()
+
+
+def count_open_inquiries_for_concepts(concept_names: list[str]) -> int:
+    """Сколько открытых вопросов уже задано ровно про этот набор концепций."""
+    wanted = frozenset(
+        " ".join(name.split()).casefold()
+        for name in concept_names
+        if isinstance(name, str) and name.strip()
+    )
+    if not wanted:
+        return 0
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT concept_names FROM inquiries WHERE status IN ('open', 'blocked')"
+        ).fetchall()
+    total = 0
+    for row in rows:
+        try:
+            names = json.loads(row["concept_names"] or "[]")
+        except json.JSONDecodeError:
+            continue
+        current = frozenset(
+            " ".join(name.split()).casefold()
+            for name in names
+            if isinstance(name, str) and name.strip()
+        )
+        if current == wanted:
+            total += 1
+    return total
 
 
 def record_inquiry_attempt(
@@ -1298,6 +1346,136 @@ def resolve_prediction(
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+BELIEF_RETIREMENT_FLOOR = 0.2
+
+
+def backfill_prediction_deadlines(now: float, horizon_seconds: float) -> int:
+    """Дать срок прогнозам, созданным до появления сроков.
+
+    Отсчёт от текущего момента, а не от создания: иначе все старые прогнозы
+    истекли бы разом, хотя шанса на проверку у них не было.
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE predictions SET expected_by=? WHERE status='pending' AND expected_by IS NULL",
+            (now + horizon_seconds,),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def list_expired_predictions(now: float, limit: int = 20) -> list[sqlite3.Row]:
+    """Прогнозы, чей срок проверки вышел, а исход так и не зафиксирован."""
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM predictions
+               WHERE status='pending' AND expected_by IS NOT NULL AND expected_by <= ?
+               ORDER BY expected_by ASC LIMIT ?""",
+            (now, limit),
+        ).fetchall()
+
+
+def expire_prediction(prediction_id: int, now: float) -> bool:
+    """Закрыть прогноз как непроверенный. Это не ошибка, а нефальсифицируемость."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE predictions
+               SET status='expired', outcome='unverified', resolved_at=?
+               WHERE id=? AND status='pending'""",
+            (now, prediction_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def list_pending_predictions_for_concepts(
+    concept_names: list[str],
+    now: float,
+    limit: int = 8,
+) -> list[sqlite3.Row]:
+    """Открытые прогнозы, пересекающиеся с наблюдением по концепциям."""
+    wanted = {name.casefold() for name in concept_names if isinstance(name, str)}
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM predictions
+               WHERE status='pending'
+                 AND (expected_by IS NULL OR expected_by >= ?)
+               ORDER BY created_at DESC""",
+            (now,),
+        ).fetchall()
+    if not wanted:
+        return rows[:limit]
+    selected = []
+    for row in rows:
+        try:
+            names = json.loads(row["concept_names"] or "[]")
+        except json.JSONDecodeError:
+            continue
+        if wanted & {name.casefold() for name in names if isinstance(name, str)}:
+            selected.append(row)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def get_cycle_event_id(cycle_id: int) -> int | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM thought_stream WHERE cycle_id=? ORDER BY id LIMIT 1",
+            (cycle_id,),
+        ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def list_beliefs_supported_by_event(event_id: int) -> list[sqlite3.Row]:
+    """Активные убеждения, опирающиеся на конкретное событие потока."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM beliefs WHERE status='active'").fetchall()
+    selected = []
+    for row in rows:
+        try:
+            evidence = json.loads(row["evidence_event_ids"] or "[]")
+        except json.JSONDecodeError:
+            continue
+        if event_id in evidence:
+            selected.append(row)
+    return selected
+
+
+def weaken_belief(
+    belief_id: int,
+    factor: float,
+    now: float,
+    *,
+    counterevidence_event_id: int | None = None,
+) -> float | None:
+    """Понизить уверенность убеждения. Ниже порога убеждение уходит из оборота."""
+    factor = max(0.0, min(1.0, float(factor)))
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT confidence, counterevidence_event_ids FROM beliefs WHERE id=?",
+            (belief_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        confidence = max(0.0, float(row["confidence"]) * factor)
+        try:
+            counter = json.loads(row["counterevidence_event_ids"] or "[]")
+        except json.JSONDecodeError:
+            counter = []
+        if counterevidence_event_id is not None and counterevidence_event_id not in counter:
+            counter.append(counterevidence_event_id)
+        status = "active" if confidence >= BELIEF_RETIREMENT_FLOOR else "retired"
+        conn.execute(
+            """UPDATE beliefs
+               SET confidence=?, counterevidence_event_ids=?, status=?, updated_at=?
+               WHERE id=?""",
+            (confidence, json.dumps(counter), status, now, belief_id),
+        )
+        conn.commit()
+    return confidence
 
 
 def list_predictions(
@@ -1487,6 +1665,9 @@ def get_cognitive_metrics() -> dict:
             """SELECT outcome, confidence FROM predictions
                WHERE status='resolved' AND outcome IN ('confirmed', 'disconfirmed')"""
         ).fetchall()
+        expired_predictions = conn.execute(
+            "SELECT COUNT(*) FROM predictions WHERE status='expired'"
+        ).fetchone()[0]
         brier = None
         if resolved:
             errors = []
@@ -1516,6 +1697,7 @@ def get_cognitive_metrics() -> dict:
             "cognitive_cycles": cycles,
             "accepted_cycle_rate": accepted_cycles / cycles if cycles else None,
             "resolved_predictions": len(resolved),
+            "expired_predictions": expired_predictions,
             "prediction_brier_score": brier,
         }
 

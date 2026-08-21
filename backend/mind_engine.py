@@ -1,6 +1,7 @@
 """
-Groq-powered mind engine.
-Models are configurable through GROQ_MODEL / GROQ_MODEL_FAST — all responses in Russian.
+Mind engine over any OpenAI-compatible endpoint (Groq, DeepSeek, ...).
+Provider and models are configurable through LLM_BASE_URL / LLM_MODEL /
+LLM_MODEL_FAST — all responses in Russian.
 Canonical system prompt per spec (pure reasoning mind, no emotions, no body).
 """
 import os
@@ -8,41 +9,60 @@ import json
 import re
 from typing import AsyncIterator
 
-from groq import APIStatusError, AsyncGroq, RateLimitError
+from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
-_client: AsyncGroq | None = None
+_client: AsyncOpenAI | None = None
 
-
-def _model_env(name: str, default: str) -> str:
-    """Groq снимает модели с обслуживания, поэтому имена задаются через .env."""
-    return os.environ.get(name, "").strip() or default
+DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
 
-MODEL       = _model_env("GROQ_MODEL", "openai/gpt-oss-120b")      # анализ концепций и созерцание
-MODEL_FAST  = _model_env("GROQ_MODEL_FAST", "openai/gpt-oss-20b")  # спонтанные мысли + фоллбэк
+def _env(*names: str, default: str = "") -> str:
+    """Первое непустое значение из перечисленных переменных окружения.
+
+    Поставщик меняется чаще, чем этого хочется: за два дня отказ у одного
+    останавливал мышление дважды. Имена LLM_* — основные, GROQ_* оставлены
+    ради совместимости с уже развёрнутым окружением.
+    """
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return default
 
 
-def _get_client() -> AsyncGroq:
+MODEL       = _env("LLM_MODEL", "GROQ_MODEL", default="openai/gpt-oss-120b")       # анализ и созерцание
+MODEL_FAST  = _env("LLM_MODEL_FAST", "GROQ_MODEL_FAST", default="openai/gpt-oss-20b")  # циклы + фоллбэк
+
+
+def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        _client = AsyncGroq(api_key=os.environ["GROQ_API_KEY"])
+        api_key = _env("LLM_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "Не задан ключ модели: LLM_API_KEY (или GROQ_API_KEY) в .env"
+            )
+        _client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=_env("LLM_BASE_URL", default=DEFAULT_BASE_URL),
+        )
     return _client
 
 
 def _model_kwargs(model: str) -> dict:
     """Параметры вызова, зависящие от модели.
 
-    Groq засчитывает токены внутреннего рассуждения в max_tokens. При усилии
-    по умолчанию gpt-oss тратит на рассуждение весь бюджет ответа и возвращает
-    пустой content с finish_reason="length", поэтому усилие ограничивается.
+    Модели с внутренним рассуждением тратят его токены из max_tokens. При
+    усилии по умолчанию gpt-oss выбирал весь бюджет ответа и возвращал пустой
+    content с finish_reason="length", поэтому усилие ограничивается.
     """
     if model.startswith("openai/gpt-oss"):
-        return {"reasoning_effort": os.environ.get("GROQ_REASONING_EFFORT", "low")}
+        return {"reasoning_effort": _env("LLM_REASONING_EFFORT", "GROQ_REASONING_EFFORT", default="low")}
     return {}
 
 
 async def _create(**kwargs):
-    """Единая точка обращения к Groq: подмешивает параметры под модель."""
+    """Единая точка обращения к модели: подмешивает параметры под неё."""
     return await _get_client().chat.completions.create(
         **kwargs, **_model_kwargs(str(kwargs.get("model", "")))
     )

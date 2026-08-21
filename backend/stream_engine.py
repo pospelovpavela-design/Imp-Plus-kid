@@ -13,7 +13,7 @@ import time
 import logging
 from typing import Any
 
-from groq import RateLimitError
+from openai import RateLimitError
 
 import cognitive_engine
 import daily_insight_engine
@@ -45,7 +45,7 @@ def _positive_int_env(name: str, default: int) -> int:
 
 
 def _rate_limit_backoff(failures: int, initial: int, maximum: int) -> int:
-    """Return a bounded exponential delay for consecutive Groq 429 responses."""
+    """Return a bounded exponential delay for consecutive 429 responses."""
     exponent = max(0, min(failures - 1, 30))
     return min(maximum, initial * (2 ** exponent))
 
@@ -235,7 +235,7 @@ async def spontaneous_loop() -> None:
                 backoff_max,
             )
             logger.warning(
-                "Groq rate limit reached; pausing cognition for %ds "
+                "Model rate limit reached; pausing cognition for %ds "
                 "(consecutive failures=%d)",
                 next_delay,
                 rate_limit_failures,

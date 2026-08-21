@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
+from collections import Counter
 from typing import Any
 
 import db
 import memory_engine
 import mind_engine
+import name_matching
 from time_engine import format_mind_timestamp, get_time_display
+
+logger = logging.getLogger("cognitive_engine")
 
 
 def _json_list(raw: str | None) -> list:
@@ -77,17 +82,30 @@ def _seed_inquiry(now: float) -> None:
     db.create_inquiry(question, names, 0.65, "grounding_gap", now)
 
 
+def _resolve_names(raw: Any, index: dict[str, str]) -> list[str]:
+    names = [
+        name_matching.resolve(name, index)
+        for name in (raw or [])
+        if isinstance(name, str)
+    ]
+    return [name for name in names if name is not None]
+
+
 def _select_focus(graph: Any, inquiry: Any | None, now: float) -> tuple[list[str], Any | None]:
     if inquiry is None:
         _seed_inquiry(now)
         inquiry = db.get_next_inquiry(now)
 
-    known = {name.casefold(): name for name in graph.all_names()}
+    known = name_matching.build_index(graph.all_names())
     if inquiry is not None:
         names = [
-            known[name.casefold()]
-            for name in _json_list(inquiry["concept_names"])
-            if isinstance(name, str) and name.casefold() in known
+            resolved
+            for resolved in (
+                name_matching.resolve(name, known)
+                for name in _json_list(inquiry["concept_names"])
+                if isinstance(name, str)
+            )
+            if resolved is not None
         ]
         if names:
             return list(dict.fromkeys(names)), inquiry
@@ -185,17 +203,25 @@ async def run_cycle(
         cycle_id=cycle_id,
     )
 
-    by_name = {
-        name.casefold(): db.get_concept_by_name(name)
-        for name in available_names
-    }
+    name_index = name_matching.build_index(available_names)
+    unresolved: list[str] = []
+
+    def lookup(raw: Any) -> Any:
+        """Имя из ответа модели → строка концепции. Потери не молчат."""
+        resolved = name_matching.resolve(str(raw or ""), name_index)
+        if resolved is None:
+            text = " ".join(str(raw or "").split())
+            if text:
+                unresolved.append(text)
+            return None
+        return db.get_concept_by_name(resolved)
     accepted_pairs: set[tuple[int, int, str]] = set()
     if verdict in {"accept", "revise"} and reliability >= 0.65:
         for relation in critique.get("accepted_relations") or []:
             if not isinstance(relation, dict):
                 continue
-            source = by_name.get(str(relation.get("source", "")).casefold())
-            target = by_name.get(str(relation.get("target", "")).casefold())
+            source = lookup(relation.get("source"))
+            target = lookup(relation.get("target"))
             label = " ".join(str(relation.get("relationship", "")).split())
             confidence = _clamp(relation.get("confidence"), 0.0)
             strength = _clamp(relation.get("strength"), 0.5)
@@ -233,8 +259,8 @@ async def run_cycle(
         for relation in candidate.get("relations") or []:
             if not isinstance(relation, dict):
                 continue
-            source = by_name.get(str(relation.get("source", "")).casefold())
-            target = by_name.get(str(relation.get("target", "")).casefold())
+            source = lookup(relation.get("source"))
+            target = lookup(relation.get("target"))
             label = " ".join(str(relation.get("relationship", "")).split())
             if not source or not target or source["id"] == target["id"] or not label:
                 continue
@@ -252,6 +278,15 @@ async def run_cycle(
                 reason=reason[:1000],
             )
             graph.sync_connection(source["id"], target["id"])
+
+    if unresolved:
+        top = ", ".join(f"{name} ×{n}" for name, n in Counter(unresolved).most_common(5))
+        logger.warning(
+            "Cycle %d: %d relation endpoint(s) did not match a graph concept: %s",
+            cycle_id,
+            len(unresolved),
+            top,
+        )
 
     next_question = candidate.get("next_question")
     if isinstance(next_question, str) and next_question.strip():
@@ -312,6 +347,7 @@ async def run_cycle(
         "reliability": reliability,
         "prediction_id": prediction_id,
         "accepted_relations": len(accepted_pairs),
+        "unresolved_names": len(unresolved),
     }
 
 
@@ -353,7 +389,7 @@ async def maybe_consolidate(graph: Any, born_at: float) -> dict | None:
         return None
 
     allowed_ids = set(event_ids)
-    known = {name.casefold(): name for name in graph.all_names()}
+    known = name_matching.build_index(graph.all_names())
     for item in result.get("beliefs") or []:
         if not isinstance(item, dict):
             continue
@@ -364,11 +400,7 @@ async def maybe_consolidate(graph: Any, born_at: float) -> dict | None:
         ]
         confidence = _clamp(item.get("confidence"), 0.0)
         statement = str(item.get("statement") or "").strip()
-        names = [
-            known[name.casefold()]
-            for name in item.get("concept_names") or []
-            if isinstance(name, str) and name.casefold() in known
-        ]
+        names = _resolve_names(item.get("concept_names"), known)
         if statement and evidence and confidence >= 0.65:
             db.upsert_belief(statement, names, confidence, evidence, now)
 
@@ -376,11 +408,7 @@ async def maybe_consolidate(graph: Any, born_at: float) -> dict | None:
         if not isinstance(item, dict):
             continue
         question = str(item.get("question") or "").strip()
-        names = [
-            known[name.casefold()]
-            for name in item.get("concept_names") or []
-            if isinstance(name, str) and name.casefold() in known
-        ]
+        names = _resolve_names(item.get("concept_names"), known)
         if question:
             db.create_inquiry(
                 question,

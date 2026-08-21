@@ -1,6 +1,6 @@
 """
 Groq-powered mind engine.
-Model: llama-3.3-70b-versatile — all responses in Russian.
+Models are configurable through GROQ_MODEL / GROQ_MODEL_FAST — all responses in Russian.
 Canonical system prompt per spec (pure reasoning mind, no emotions, no body).
 """
 import os
@@ -8,11 +8,18 @@ import json
 import re
 from typing import AsyncIterator
 
-from groq import AsyncGroq, RateLimitError
+from groq import APIStatusError, AsyncGroq, RateLimitError
 
 _client: AsyncGroq | None = None
-MODEL       = "llama-3.3-70b-versatile"  # для анализа концепций и созерцания
-MODEL_FAST  = "llama-3.1-8b-instant"    # для спонтанных мыслей + фоллбэк
+
+
+def _model_env(name: str, default: str) -> str:
+    """Groq снимает модели с обслуживания, поэтому имена задаются через .env."""
+    return os.environ.get(name, "").strip() or default
+
+
+MODEL       = _model_env("GROQ_MODEL", "openai/gpt-oss-120b")      # анализ концепций и созерцание
+MODEL_FAST  = _model_env("GROQ_MODEL_FAST", "openai/gpt-oss-20b")  # спонтанные мысли + фоллбэк
 
 
 def _get_client() -> AsyncGroq:
@@ -105,6 +112,11 @@ async def _json_completion(
             last_error = exc
             if model == models[-1]:
                 raise
+        except APIStatusError as exc:
+            # Недоступная или снятая с обслуживания модель — пробуем следующую
+            last_error = exc
+            if model == models[-1]:
+                raise
         except (json.JSONDecodeError, ValueError, AttributeError, KeyError) as exc:
             last_error = exc
     raise ValueError(f"Could not parse model JSON: {last_error}")
@@ -169,7 +181,7 @@ async def analyze_concept_stream(
                 if content:
                     yield content
             return
-        except RateLimitError:
+        except (RateLimitError, APIStatusError):
             if model == MODEL_FAST:
                 raise
             continue
@@ -235,7 +247,7 @@ async def contemplate_stream(
                 if content:
                     yield content
             return
-        except RateLimitError:
+        except (RateLimitError, APIStatusError):
             if model == MODEL_FAST:
                 raise
             continue
@@ -309,7 +321,7 @@ async def synthesize_working_definitions(
             data = json.loads(match.group(0) if match else text)
             definitions = data.get("definitions", [])
             return definitions if isinstance(definitions, list) else []
-        except (RateLimitError, json.JSONDecodeError, AttributeError, KeyError):
+        except (RateLimitError, APIStatusError, json.JSONDecodeError, AttributeError, KeyError):
             if model == MODEL_FAST:
                 return []
             continue
@@ -388,7 +400,7 @@ async def analyze_grounding_excerpt(
                 "concept_links": data.get("concept_links") if isinstance(data.get("concept_links"), list) else [],
                 "definitions": data.get("definitions") if isinstance(data.get("definitions"), list) else [],
             }
-        except (RateLimitError, json.JSONDecodeError, AttributeError, KeyError):
+        except (RateLimitError, APIStatusError, json.JSONDecodeError, AttributeError, KeyError):
             if model == MODEL_FAST:
                 return {"experience": "", "concept_links": [], "definitions": []}
             continue
@@ -504,7 +516,7 @@ async def check_concept_stream(
                 if content:
                     yield content
             return
-        except RateLimitError:
+        except (RateLimitError, APIStatusError):
             if model == MODEL_FAST:
                 raise
             continue

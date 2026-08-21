@@ -29,6 +29,25 @@ def _get_client() -> AsyncGroq:
     return _client
 
 
+def _model_kwargs(model: str) -> dict:
+    """Параметры вызова, зависящие от модели.
+
+    Groq засчитывает токены внутреннего рассуждения в max_tokens. При усилии
+    по умолчанию gpt-oss тратит на рассуждение весь бюджет ответа и возвращает
+    пустой content с finish_reason="length", поэтому усилие ограничивается.
+    """
+    if model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": os.environ.get("GROQ_REASONING_EFFORT", "low")}
+    return {}
+
+
+async def _create(**kwargs):
+    """Единая точка обращения к Groq: подмешивает параметры под модель."""
+    return await _get_client().chat.completions.create(
+        **kwargs, **_model_kwargs(str(kwargs.get("model", "")))
+    )
+
+
 # ── Canonical system prompt (spec) ────────────────────────────────────────
 
 def _build_system(mind_age: str, concept_count: int, connection_count: int,
@@ -95,11 +114,10 @@ async def _json_completion(
     max_tokens: int,
     models: tuple[str, ...] = (MODEL, MODEL_FAST),
 ) -> dict:
-    client = _get_client()
     last_error: Exception | None = None
     for model in models:
         try:
-            result = await client.chat.completions.create(
+            result = await _create(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[
@@ -107,7 +125,13 @@ async def _json_completion(
                     {"role": "user", "content": prompt},
                 ],
             )
-            return _extract_json_object(result.choices[0].message.content.strip())
+            content = (result.choices[0].message.content or "").strip()
+            if not content:
+                raise ValueError(
+                    f"{model} returned empty content "
+                    f"(finish_reason={result.choices[0].finish_reason})"
+                )
+            return _extract_json_object(content)
         except RateLimitError as exc:
             last_error = exc
             if model == models[-1]:
@@ -164,10 +188,9 @@ async def analyze_concept_stream(
 }}
 ```"""
 
-    client = _get_client()
     for model in (MODEL, MODEL_FAST):
         try:
-            stream = await client.chat.completions.create(
+            stream = await _create(
                 model=model,
                 max_tokens=1500,
                 messages=[
@@ -230,10 +253,9 @@ async def contemplate_stream(
 Не добавляй JSON, markdown-код, служебные блоки или технические данные после ответа.
 Ответ должен закончиться секцией "ГОЛОС РАЗУМА"."""
 
-    client = _get_client()
     for model in (MODEL, MODEL_FAST):
         try:
-            stream = await client.chat.completions.create(
+            stream = await _create(
                 model=model,
                 max_tokens=1200,
                 messages=[
@@ -305,10 +327,9 @@ async def synthesize_working_definitions(
     }}
   ]
 }}"""
-    client = _get_client()
     for model in (MODEL, MODEL_FAST):
         try:
-            result = await client.chat.completions.create(
+            result = await _create(
                 model=model,
                 max_tokens=700,
                 messages=[
@@ -381,10 +402,9 @@ async def analyze_grounding_excerpt(
   ]
 }}"""
 
-    client = _get_client()
     for model in (MODEL, MODEL_FAST):
         try:
-            result = await client.chat.completions.create(
+            result = await _create(
                 model=model,
                 max_tokens=1000,
                 messages=[
@@ -436,8 +456,7 @@ async def generate_spontaneous(
 ```
 strength: 0.1–1.0. Имена только из: {names_str}"""
 
-    client = _get_client()
-    response = await client.chat.completions.create(
+    response = await _create(
         model=MODEL_FAST,
         max_tokens=500,
         messages=[
@@ -464,8 +483,7 @@ async def generate_milestone_reflection(
 
 3–5 предложений: что стало яснее, что остаётся неизвестным, какой паттерн обнаруживается."""
 
-    client = _get_client()
-    response = await client.chat.completions.create(
+    response = await _create(
         model=MODEL_FAST,
         max_tokens=400,
         messages=[
@@ -499,10 +517,9 @@ async def check_concept_stream(
 
 Только наблюдение. Без советов."""
 
-    client = _get_client()
     for model in (MODEL, MODEL_FAST):
         try:
-            stream = await client.chat.completions.create(
+            stream = await _create(
                 model=model,
                 max_tokens=300,
                 messages=[
@@ -543,8 +560,7 @@ async def generate_autonomous_concept(
 
 Никакого другого текста."""
 
-    client = _get_client()
-    response = await client.chat.completions.create(
+    response = await _create(
         model=MODEL_FAST,
         max_tokens=150,
         messages=[
@@ -635,7 +651,7 @@ async def generate_cognitive_candidate(
         system,
         prompt,
         max_tokens=700,
-        models=(MODEL_FAST,),
+        models=(MODEL_FAST, MODEL),
     )
     data.setdefault("relations", [])
     data.setdefault("evidence_memory_ids", [])
@@ -790,7 +806,7 @@ async def generate_daily_insight_candidate(
         system,
         prompt,
         max_tokens=500,
-        models=(MODEL_FAST,),
+        models=(MODEL_FAST, MODEL),
     )
 
 

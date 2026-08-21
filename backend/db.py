@@ -518,6 +518,17 @@ def _archive_connection(
     )
 
 
+def min_active_connections(conn: sqlite3.Connection, floor_degree: float = 8.0) -> int:
+    """Сколько связей граф обязан сохранить, чтобы остаться средой для мышления.
+
+    Отбор убирает лишнее, но не имеет права свести граф к нулю: пока заземления
+    мало, подтверждать связи почти нечем, и без нижней границы затухание съело бы
+    подложку быстрее, чем циклы успевают её восстанавливать.
+    """
+    concepts = conn.execute("SELECT COUNT(*) FROM concepts").fetchone()[0]
+    return max(200, int(concepts * floor_degree / 2))
+
+
 def decay_connections(
     now: float,
     since: float,
@@ -526,13 +537,15 @@ def decay_connections(
     floor: float = 0.15,
     grace_days: float = 14.0,
     budget: int = 40,
+    min_active: int | None = None,
 ) -> dict:
     """Ослабить связи, которые давно не подтверждались.
 
     Связь, за которую давно никто не поручился, теряет уверенность тем медленнее,
     чем больше свидетельств она набрала: выживание пропорционально опоре. Упавшая
     ниже порога уходит в архив, но не ценой изоляции концепции — последнюю
-    активную связь узла не забираем.
+    активную связь узла не забираем, и общее число связей не опускается ниже
+    нижней границы: ослабевать можно, исчезнуть всем сразу нельзя.
     """
     grace = grace_days * 86400.0
     half_life = max(1.0, half_life_days * 86400.0)
@@ -550,6 +563,10 @@ def decay_connections(
                WHERE status='active' AND concept_a_id <> concept_b_id"""
         ).fetchall()
         degree = _active_degree_map(conn)
+        remaining = len(rows)
+        keep_at_least = (
+            min_active if min_active is not None else min_active_connections(conn)
+        )
         for row in rows:
             last_evidence = float(row["updated_at"] or row["created_at"])
             if now - last_evidence <= grace:
@@ -560,12 +577,14 @@ def decay_connections(
             if (
                 confidence < floor
                 and len(archived) < budget
+                and remaining > keep_at_least
                 and degree.get(a_id, 0) > 1
                 and degree.get(b_id, 0) > 1
             ):
                 _archive_connection(conn, int(row["id"]), "decayed", confidence, now)
                 degree[a_id] -= 1
                 degree[b_id] -= 1
+                remaining -= 1
                 archived.append((a_id, b_id))
                 continue
             conn.execute(
@@ -582,6 +601,7 @@ def enforce_degree_cap(
     *,
     cap: int = 24,
     budget: int = 40,
+    min_active: int | None = None,
 ) -> list[tuple[int, int]]:
     """Оставить у концепции не больше cap активных связей.
 
@@ -599,6 +619,10 @@ def enforce_degree_cap(
         ).fetchall()
         by_id = {int(row["id"]): row for row in rows}
         degree = _active_degree_map(conn)
+        remaining = len(rows)
+        keep_at_least = (
+            min_active if min_active is not None else min_active_connections(conn)
+        )
         neighbours: dict[int, list[int]] = {}
         for row in rows:
             neighbours.setdefault(int(row["concept_a_id"]), []).append(int(row["id"]))
@@ -624,6 +648,8 @@ def enforce_degree_cap(
             for connection_id in sorted(edges, key=weakest_first):
                 if degree.get(node, 0) <= cap or len(displaced) >= budget:
                     break
+                if remaining <= keep_at_least:
+                    break
                 row = by_id[connection_id]
                 a_id, b_id = int(row["concept_a_id"]), int(row["concept_b_id"])
                 other = b_id if a_id == node else a_id
@@ -635,6 +661,7 @@ def enforce_degree_cap(
                 dropped.add(connection_id)
                 degree[node] -= 1
                 degree[other] -= 1
+                remaining -= 1
                 displaced.append((a_id, b_id))
             if len(displaced) >= budget:
                 break

@@ -35,6 +35,10 @@ OBSERVATION_CANDIDATE_LIMIT = 5
 OBSERVATION_MAX_RESOLUTIONS = 3
 # Доля слов свидетельства, которая обязана встретиться в самом наблюдении
 EVIDENCE_QUOTE_RATIO = 0.6
+# Отбор связей: как часто, сколько связей за раз, сколько соседей у концепции
+GRAPH_SELECTION_INTERVAL_DEFAULT = 86400
+GRAPH_SELECTION_BUDGET_DEFAULT = 60
+GRAPH_DEGREE_CAP_DEFAULT = 24
 
 _WORD_RE = re.compile(r"[^\W_]{3,}", flags=re.UNICODE)
 
@@ -644,6 +648,52 @@ def expire_predictions(born_at: float) -> list[dict]:
             "created_at": now,
         })
     return events
+
+
+def maybe_select_connections(graph: Any) -> dict | None:
+    """Отбор связей: затухание без подтверждений и конкуренция за место в окрестности.
+
+    Плотный граф ничего не различает: пока каждый узел связан с каждым третьим,
+    новое ребро делает его однороднее, а не структурнее. Отбор идёт с суточным
+    шагом и ограниченным бюджетом, чтобы перестройку можно было наблюдать и
+    остановить, а не обнаружить постфактум.
+    """
+    now = time.time()
+    interval = _positive_env(
+        "GRAPH_SELECTION_INTERVAL_SECONDS", GRAPH_SELECTION_INTERVAL_DEFAULT
+    )
+    raw = db.get_cognitive_state("last_graph_selection_at")
+    try:
+        last = float(raw) if raw else 0.0
+    except ValueError:
+        last = 0.0
+    if now - last < interval:
+        return None
+
+    since = last if last else now - interval
+    budget = _positive_env("GRAPH_SELECTION_BUDGET", GRAPH_SELECTION_BUDGET_DEFAULT)
+    cap = _positive_env("GRAPH_DEGREE_CAP", GRAPH_DEGREE_CAP_DEFAULT)
+
+    decayed = db.decay_connections(now, since, budget=budget)
+    displaced = db.enforce_degree_cap(now, cap=cap, budget=budget)
+    for a_id, b_id in [*decayed["archived"], *displaced]:
+        graph.sync_connection(a_id, b_id)
+    db.set_cognitive_state("last_graph_selection_at", str(now), now)
+
+    result = {
+        "weakened": decayed["weakened"],
+        "archived_by_decay": len(decayed["archived"]),
+        "displaced_by_cap": len(displaced),
+        "active_edges": graph.edge_count(),
+    }
+    logger.info(
+        "Graph selection: weakened=%d, archived=%d, displaced=%d, active edges=%d",
+        result["weakened"],
+        result["archived_by_decay"],
+        result["displaced_by_cap"],
+        result["active_edges"],
+    )
+    return result
 
 
 async def maybe_consolidate(graph: Any, born_at: float) -> dict | None:

@@ -2,6 +2,7 @@
 import sqlite3
 import json
 import hashlib
+import math
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -488,6 +489,157 @@ def list_concepts_needing_grounding(limit: int = 12) -> list[sqlite3.Row]:
                LIMIT ?""",
             (limit,),
         ).fetchall()
+
+
+def _active_degree_map(conn: sqlite3.Connection) -> dict[int, int]:
+    """Степень каждой концепции по активным связям."""
+    degree: dict[int, int] = {}
+    for row in conn.execute(
+        """SELECT concept_a_id, concept_b_id FROM concept_connections
+           WHERE status='active' AND concept_a_id <> concept_b_id"""
+    ):
+        degree[row["concept_a_id"]] = degree.get(row["concept_a_id"], 0) + 1
+        degree[row["concept_b_id"]] = degree.get(row["concept_b_id"], 0) + 1
+    return degree
+
+
+def _archive_connection(
+    conn: sqlite3.Connection,
+    connection_id: int,
+    reason: str,
+    confidence: float,
+    now: float,
+) -> None:
+    conn.execute(
+        """UPDATE concept_connections
+           SET status='archived', source=?, confidence=?, updated_at=?
+           WHERE id=?""",
+        (reason, max(0.0, min(1.0, confidence)), now, connection_id),
+    )
+
+
+def decay_connections(
+    now: float,
+    since: float,
+    *,
+    half_life_days: float = 45.0,
+    floor: float = 0.15,
+    grace_days: float = 14.0,
+    budget: int = 40,
+) -> dict:
+    """Ослабить связи, которые давно не подтверждались.
+
+    Связь, за которую давно никто не поручился, теряет уверенность тем медленнее,
+    чем больше свидетельств она набрала: выживание пропорционально опоре. Упавшая
+    ниже порога уходит в архив, но не ценой изоляции концепции — последнюю
+    активную связь узла не забираем.
+    """
+    grace = grace_days * 86400.0
+    half_life = max(1.0, half_life_days * 86400.0)
+    elapsed = max(0.0, now - since)
+    weakened = 0
+    archived: list[tuple[int, int]] = []
+    if elapsed <= 0:
+        return {"weakened": 0, "archived": archived}
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, concept_a_id, concept_b_id, confidence, evidence_count,
+                      updated_at, created_at
+               FROM concept_connections
+               WHERE status='active' AND concept_a_id <> concept_b_id"""
+        ).fetchall()
+        degree = _active_degree_map(conn)
+        for row in rows:
+            last_evidence = float(row["updated_at"] or row["created_at"])
+            if now - last_evidence <= grace:
+                continue
+            support = 1.0 + math.log2(max(1, int(row["evidence_count"])))
+            confidence = float(row["confidence"]) * 0.5 ** (elapsed / (half_life * support))
+            a_id, b_id = int(row["concept_a_id"]), int(row["concept_b_id"])
+            if (
+                confidence < floor
+                and len(archived) < budget
+                and degree.get(a_id, 0) > 1
+                and degree.get(b_id, 0) > 1
+            ):
+                _archive_connection(conn, int(row["id"]), "decayed", confidence, now)
+                degree[a_id] -= 1
+                degree[b_id] -= 1
+                archived.append((a_id, b_id))
+                continue
+            conn.execute(
+                "UPDATE concept_connections SET confidence=? WHERE id=?",
+                (max(0.0, confidence), int(row["id"])),
+            )
+            weakened += 1
+        conn.commit()
+    return {"weakened": weakened, "archived": archived}
+
+
+def enforce_degree_cap(
+    now: float,
+    *,
+    cap: int = 24,
+    budget: int = 40,
+) -> list[tuple[int, int]]:
+    """Оставить у концепции не больше cap активных связей.
+
+    Пока каждый узел связан с каждым третьим, различать нечего: связи должны
+    конкурировать за место в окрестности. Вытесняются слабейшие, и снова —
+    не последняя связь соседа.
+    """
+    displaced: list[tuple[int, int]] = []
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, concept_a_id, concept_b_id, confidence, strength,
+                      evidence_count, updated_at, created_at
+               FROM concept_connections
+               WHERE status='active' AND concept_a_id <> concept_b_id"""
+        ).fetchall()
+        by_id = {int(row["id"]): row for row in rows}
+        degree = _active_degree_map(conn)
+        neighbours: dict[int, list[int]] = {}
+        for row in rows:
+            neighbours.setdefault(int(row["concept_a_id"]), []).append(int(row["id"]))
+            neighbours.setdefault(int(row["concept_b_id"]), []).append(int(row["id"]))
+
+        def weakest_first(connection_id: int) -> tuple:
+            row = by_id[connection_id]
+            return (
+                float(row["confidence"]),
+                float(row["strength"]),
+                int(row["evidence_count"]),
+                float(row["updated_at"] or row["created_at"]),
+            )
+
+        crowded = sorted(
+            (node for node, edges in neighbours.items() if len(edges) > cap),
+            key=lambda node: len(neighbours[node]),
+            reverse=True,
+        )
+        dropped: set[int] = set()
+        for node in crowded:
+            edges = [eid for eid in neighbours[node] if eid not in dropped]
+            for connection_id in sorted(edges, key=weakest_first):
+                if degree.get(node, 0) <= cap or len(displaced) >= budget:
+                    break
+                row = by_id[connection_id]
+                a_id, b_id = int(row["concept_a_id"]), int(row["concept_b_id"])
+                other = b_id if a_id == node else a_id
+                if degree.get(other, 0) <= 1:
+                    continue
+                _archive_connection(
+                    conn, connection_id, "displaced", float(row["confidence"]), now
+                )
+                dropped.add(connection_id)
+                degree[node] -= 1
+                degree[other] -= 1
+                displaced.append((a_id, b_id))
+            if len(displaced) >= budget:
+                break
+        conn.commit()
+    return displaced
 
 
 def upsert_connection(
@@ -1668,6 +1820,25 @@ def get_cognitive_metrics() -> dict:
         expired_predictions = conn.execute(
             "SELECT COUNT(*) FROM predictions WHERE status='expired'"
         ).fetchone()[0]
+        decayed_edges = conn.execute(
+            "SELECT COUNT(*) FROM concept_connections WHERE source='decayed'"
+        ).fetchone()[0]
+        displaced_edges = conn.execute(
+            "SELECT COUNT(*) FROM concept_connections WHERE source='displaced'"
+        ).fetchone()[0]
+        cognitive_edges = conn.execute(
+            """SELECT COUNT(*) FROM concept_connections
+               WHERE status='active' AND source='critic_accepted'"""
+        ).fetchone()[0]
+        top_label_share = conn.execute(
+            """SELECT COUNT(*) FROM concept_connections
+               WHERE status='active'
+                 AND relationship = (
+                     SELECT relationship FROM concept_connections
+                     WHERE status='active'
+                     GROUP BY relationship ORDER BY COUNT(*) DESC LIMIT 1
+                 )"""
+        ).fetchone()[0]
         brier = None
         if resolved:
             errors = []
@@ -1680,6 +1851,10 @@ def get_cognitive_metrics() -> dict:
             "concepts": concepts,
             "active_edges": active_edges,
             "archived_edges": archived_edges,
+            "cognitive_edges": cognitive_edges,
+            "decayed_edges": decayed_edges,
+            "displaced_edges": displaced_edges,
+            "top_label_share": top_label_share / active_edges if active_edges else 0.0,
             "active_graph_density": active_edges / max_edges if max_edges else 0.0,
             "grounded_concepts": grounded,
             "grounding_coverage": grounded / concepts if concepts else 0.0,

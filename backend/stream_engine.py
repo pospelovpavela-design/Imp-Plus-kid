@@ -211,6 +211,7 @@ async def spontaneous_loop() -> None:
                 )
             for expired in cognitive_engine.expire_predictions(_born_at):
                 await broadcast(expired)
+            cognitive_engine.maybe_select_connections(_concept_graph)
             consolidation = await cognitive_engine.maybe_consolidate(
                 _concept_graph,
                 _born_at,

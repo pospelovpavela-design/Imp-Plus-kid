@@ -273,6 +273,49 @@ def _canonical_concept_names(names: list[str]) -> list[str]:
     return [concept["name"] for concept in found]
 
 
+class ModelFailure:
+    """Отказ модели, дошедший до потока вместо очередного куска текста."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+async def _guarded(source):
+    """Проксирует поток модели, превращая её отказ в одно понятное сообщение."""
+    try:
+        async for chunk in source:
+            yield chunk
+    except Exception as exc:
+        print(f"[IMPLUS] Model stream failed: {exc}")
+        yield ModelFailure(_model_error_text(exc))
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _model_error_text(exc: Exception) -> str:
+    """Отказ модели человеческим языком.
+
+    Ошибка приходит уже после начала потока, HTTP-статус отправлен, и без
+    такого сообщения браузер показывает только «Load failed».
+    """
+    status = getattr(exc, "status_code", None)
+    if status == 401:
+        return (
+            "Разум не отвечает: ключ модели недействителен или истёк. "
+            "Проверьте LLM_API_KEY в .env на сервере."
+        )
+    if status == 404:
+        return (
+            "Разум не отвечает: указанная модель недоступна для этого ключа. "
+            "Проверьте LLM_MODEL и LLM_MODEL_FAST в .env."
+        )
+    if status == 429:
+        return "Разум не отвечает: превышен лимит запросов к модели. Повторите позже."
+    return f"Разум не отвечает: {exc}"
+
+
 def _json_column(row, column: str, fallback):
     try:
         return json.loads(row[column] or json.dumps(fallback))
@@ -297,13 +340,20 @@ async def check_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     )
 
     async def generate():
-        async for chunk in mind_engine.check_concept_stream(
-            body.name, body.definition, existing_names, td.mind_age_human,
-            connection_count=graph.edge_count(),
-            grounding_context=_combine_contexts(working_context, grounding_context),
-        ):
-            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
-        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+        try:
+            async for chunk in mind_engine.check_concept_stream(
+                body.name, body.definition, existing_names, td.mind_age_human,
+                connection_count=graph.edge_count(),
+                grounding_context=_combine_contexts(working_context, grounding_context),
+            ):
+                yield _sse({"chunk": chunk})
+        except Exception as exc:
+            message = _model_error_text(exc)
+            print(f"[IMPLUS] Concept check stream failed: {exc}")
+            yield _sse({"chunk": message})
+            yield _sse({"done": True, "error": message})
+            return
+        yield _sse({"done": True})
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -331,13 +381,21 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
 
     async def generate():
         full_text = ""
-        async for chunk in mind_engine.analyze_concept_stream(
-            body.name, body.definition, existing_names, td.mind_age_human,
-            connection_count=n_edges,
-            grounding_context=_combine_contexts(working_context, grounding_context),
-        ):
-            full_text += chunk
-            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        try:
+            async for chunk in mind_engine.analyze_concept_stream(
+                body.name, body.definition, existing_names, td.mind_age_human,
+                connection_count=n_edges,
+                grounding_context=_combine_contexts(working_context, grounding_context),
+            ):
+                full_text += chunk
+                yield _sse({"chunk": chunk})
+        except Exception as exc:
+            # Концепция не сохраняется: без разбора она осталась бы пустым ярлыком
+            message = _model_error_text(exc)
+            print(f"[IMPLUS] Concept analysis stream failed: {exc}")
+            yield _sse({"chunk": message})
+            yield _sse({"done": True, "error": message})
+            return
 
         # Persist the operator-provided concept. Model-suggested relations remain
         # proposals until a later independent cognitive cycle accepts them.
@@ -592,11 +650,16 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
         visible_text = ""
         pending = ""
         suppress_json = False
-        async for chunk in mind_engine.contemplate_stream(
+        stream = mind_engine.contemplate_stream(
             body.thought, existing_names, td.mind_age_human,
             connection_count=graph.edge_count(),
             grounding_context=_combine_contexts(working_context, grounding_context),
-        ):
+        )
+        async for chunk in _guarded(stream):
+            if isinstance(chunk, ModelFailure):
+                yield _sse({"chunk": chunk.message})
+                yield _sse({"done": True, "error": chunk.message})
+                return
             full_text += chunk
             if suppress_json:
                 continue

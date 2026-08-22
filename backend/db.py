@@ -3,6 +3,7 @@ import sqlite3
 import json
 import hashlib
 import math
+import time
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -1844,6 +1845,14 @@ def get_cognitive_metrics() -> dict:
             """SELECT outcome, confidence FROM predictions
                WHERE status='resolved' AND outcome IN ('confirmed', 'disconfirmed')"""
         ).fetchall()
+        health = {
+            row["key"]: row["value"]
+            for row in conn.execute(
+                """SELECT key, value FROM cognitive_state
+                   WHERE key IN ('last_cycle_at', 'last_cycle_error',
+                                 'last_cycle_error_at', 'cycle_interval_seconds')"""
+            )
+        }
         expired_predictions = conn.execute(
             "SELECT COUNT(*) FROM predictions WHERE status='expired'"
         ).fetchone()[0]
@@ -1873,6 +1882,18 @@ def get_cognitive_metrics() -> dict:
                 target = 1.0 if row["outcome"] == "confirmed" else 0.0
                 errors.append((float(row["confidence"]) - target) ** 2)
             brier = sum(errors) / len(errors)
+        def _as_float(key: str) -> float | None:
+            try:
+                return float(health[key])
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        now = time.time()
+        last_cycle_at = _as_float("last_cycle_at")
+        silence = now - last_cycle_at if last_cycle_at else None
+        interval = _as_float("cycle_interval_seconds") or 1800.0
+        last_error = (health.get("last_cycle_error") or "").strip() or None
+
         max_edges = concepts * (concepts - 1) / 2 if concepts > 1 else 0
         return {
             "concepts": concepts,
@@ -1900,6 +1921,12 @@ def get_cognitive_metrics() -> dict:
             "accepted_cycle_rate": accepted_cycles / cycles if cycles else None,
             "resolved_predictions": len(resolved),
             "expired_predictions": expired_predictions,
+            "last_cycle_at": last_cycle_at,
+            "seconds_since_last_cycle": silence,
+            # Молчание дольше трёх интервалов — уже не пауза, а остановка
+            "cognition_stalled": bool(silence is not None and silence > interval * 3),
+            "last_cycle_error": last_error,
+            "last_cycle_error_at": _as_float("last_cycle_error_at"),
             "prediction_brier_score": brier,
         }
 

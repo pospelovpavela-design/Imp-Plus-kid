@@ -44,6 +44,21 @@ def _positive_int_env(name: str, default: int) -> int:
     return value
 
 
+def _record_cycle_health(ok: bool, error: str | None = None) -> None:
+    """Отметить исход цикла, чтобы молчание было видно снаружи.
+
+    Обе остановки мышления в августе выглядели одинаково: живой сервис, сайт
+    отдаёт 200, и единственный след аварии — строка в журнале на сервере.
+    """
+    now = time.time()
+    if ok:
+        db.set_cognitive_state("last_cycle_at", str(now), now)
+        db.set_cognitive_state("last_cycle_error", "", now)
+        return
+    db.set_cognitive_state("last_cycle_error", " ".join(str(error or "").split())[:500], now)
+    db.set_cognitive_state("last_cycle_error_at", str(now), now)
+
+
 def _rate_limit_backoff(failures: int, initial: int, maximum: int) -> int:
     """Return a bounded exponential delay for consecutive 429 responses."""
     exponent = max(0, min(failures - 1, 30))
@@ -195,6 +210,7 @@ async def spontaneous_loop() -> None:
         backoff_initial,
         backoff_max,
     )
+    db.set_cognitive_state("cycle_interval_seconds", str(interval), time.time())
     await asyncio.sleep(10)  # wait for server to fully boot
     while True:
         await asyncio.sleep(next_delay)
@@ -202,6 +218,7 @@ async def spontaneous_loop() -> None:
         try:
             await _check_milestones()
             event = await cognitive_engine.run_cycle(_concept_graph, _born_at)
+            _record_cycle_health(True)
             if event is not None:
                 await broadcast(event)
                 logger.info(
@@ -227,7 +244,8 @@ async def spontaneous_loop() -> None:
                         await broadcast(daily_event)
                     logger.info("Daily insight generated for %s", insight["local_date"])
             rate_limit_failures = 0
-        except RateLimitError:
+        except RateLimitError as exc:
+            _record_cycle_health(False, f"Лимит запросов к модели: {exc}")
             rate_limit_failures += 1
             next_delay = _rate_limit_backoff(
                 rate_limit_failures,
@@ -241,6 +259,7 @@ async def spontaneous_loop() -> None:
                 rate_limit_failures,
             )
         except Exception as exc:
+            _record_cycle_health(False, str(exc))
             logger.exception("Cognitive loop error: %s", exc)
 
 

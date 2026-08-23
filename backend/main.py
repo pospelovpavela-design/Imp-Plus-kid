@@ -148,6 +148,12 @@ class PredictionResolutionBody(BaseModel):
     evidence: str
 
 
+class InquiryAnswerBody(BaseModel):
+    content: str
+    source: str
+    reliability: float = 0.8
+
+
 def _grounding_row_to_dict(row):
     return {
         "id": row["id"],
@@ -908,6 +914,67 @@ def daily_insights(
         daily_insight_engine.row_to_dict(row)
         for row in db.list_daily_insights(limit, offset)
     ]
+
+
+@app.get("/mind/requests")
+def cognitive_requests(limit: int = Query(20, ge=1, le=100)):
+    """Что разум просит у оператора — единственный его канал наружу."""
+    return [
+        {**dict(row), "concept_names": _json_column(row, "concept_names", [])}
+        for row in db.list_operator_requests(limit)
+    ]
+
+
+@app.post("/mind/inquiries/{inquiry_id}/answer")
+async def answer_cognitive_inquiry(
+    inquiry_id: int,
+    body: InquiryAnswerBody,
+    _=Depends(auth.require_auth),
+):
+    """Ответить на просьбу разума: ответ входит как внешнее наблюдение."""
+    inquiry = db.get_inquiry(inquiry_id)
+    if inquiry is None:
+        raise HTTPException(status_code=404, detail="Вопрос не найден")
+    if inquiry["origin"] != db.OPERATOR_REQUEST_ORIGIN:
+        raise HTTPException(status_code=400, detail="Это внутренний вопрос разума")
+    content = " ".join(body.content.split()).strip()
+    source = " ".join(body.source.split()).strip()
+    if not content or not source:
+        raise HTTPException(status_code=422, detail="Нужны ответ и источник")
+    if len(content) > 10_000 or len(source) > 500:
+        raise HTTPException(status_code=422, detail="Ответ или источник слишком длинные")
+    if not 0.0 <= body.reliability <= 1.0:
+        raise HTTPException(status_code=422, detail="Надёжность должна быть от 0 до 1")
+
+    concept_names = _json_column(inquiry, "concept_names", [])
+    now = time.time()
+    observation_id = db.insert_external_observation(
+        content, source, concept_names, body.reliability, now
+    )
+    event_id = await stream_engine.push_external_event(
+        "observation",
+        f"Ответ оператора на вопрос #{inquiry_id} ({source}): {content}",
+        concept_names,
+        salience=0.95,
+        reliability=body.reliability,
+    )
+    db.resolve_inquiry(inquiry_id, content, now)
+    resolved: list[int] = []
+    try:
+        state = db.get_mind_state()
+        for payload in await cognitive_engine.resolve_predictions_with_observation(
+            content, source, concept_names, graph, state["born_at"]
+        ):
+            await stream_engine.broadcast(payload)
+            resolved.append(int(payload["id"]))
+    except Exception as exc:
+        print(f"[IMPLUS] Prediction matching failed: {exc}")
+    return {
+        "inquiry_id": inquiry_id,
+        "observation_id": observation_id,
+        "event_id": event_id,
+        "feedback_event_ids": resolved,
+    }
 
 
 @app.post("/mind/observations")

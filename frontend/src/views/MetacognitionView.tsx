@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import {
   addExternalObservation,
+  answerInquiry,
   fetchCognitiveBeliefs,
   fetchCognitiveCycles,
   fetchCognitiveInquiries,
   fetchCognitiveMetrics,
   fetchCognitivePredictions,
   fetchExternalObservations,
+  fetchOperatorRequests,
   fetchSelfModel,
   resolvePrediction,
 } from '../api'
@@ -21,7 +23,7 @@ import type {
   SelfModelEntry,
 } from '../types'
 
-type View = 'cycles' | 'inquiries' | 'beliefs' | 'predictions' | 'self'
+type View = 'requests' | 'cycles' | 'inquiries' | 'beliefs' | 'predictions' | 'self'
 
 const EMPTY_METRICS: CognitiveMetrics = {
   concepts: 0,
@@ -46,13 +48,14 @@ const EMPTY_METRICS: CognitiveMetrics = {
 }
 
 export default function MetacognitionView() {
-  const [view, setView] = useState<View>('cycles')
+  const [view, setView] = useState<View>('requests')
   const [metrics, setMetrics] = useState<CognitiveMetrics>(EMPTY_METRICS)
   const [inquiries, setInquiries] = useState<CognitiveInquiry[]>([])
   const [beliefs, setBeliefs] = useState<CognitiveBelief[]>([])
   const [predictions, setPredictions] = useState<CognitivePrediction[]>([])
   const [selfModel, setSelfModel] = useState<SelfModelEntry[]>([])
   const [cycles, setCycles] = useState<CognitiveCycle[]>([])
+  const [requests, setRequests] = useState<CognitiveInquiry[]>([])
   const [observations, setObservations] = useState<ExternalObservation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -68,6 +71,7 @@ export default function MetacognitionView() {
         nextSelf,
         nextObservations,
         nextCycles,
+        nextRequests,
       ] = await Promise.all([
         fetchCognitiveMetrics(),
         fetchCognitiveInquiries(),
@@ -76,6 +80,7 @@ export default function MetacognitionView() {
         fetchSelfModel(),
         fetchExternalObservations(),
         fetchCognitiveCycles(),
+        fetchOperatorRequests(),
       ])
       setMetrics(nextMetrics)
       setInquiries(nextInquiries)
@@ -84,6 +89,7 @@ export default function MetacognitionView() {
       setSelfModel(nextSelf)
       setObservations(nextObservations)
       setCycles(nextCycles)
+      setRequests(nextRequests)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
     } finally {
@@ -122,6 +128,7 @@ export default function MetacognitionView() {
 
         <div className="mt-6 flex overflow-x-auto border-b border-border">
           {([
+            ['requests', `Разум спрашивает ${requests.length}`],
             ['cycles', `Ход мысли ${metrics.cognitive_cycles}`],
             ['inquiries', `Вопросы ${metrics.open_inquiries}`],
             ['beliefs', `Убеждения ${beliefs.length}`],
@@ -145,6 +152,9 @@ export default function MetacognitionView() {
 
         <div className="py-3">
           {loading && <p className="py-8 text-center text-xs text-text-dim">Загрузка...</p>}
+          {!loading && view === 'requests' && (
+            <RequestList items={requests} onAnswered={refresh} />
+          )}
           {!loading && view === 'cycles' && <CycleList items={cycles} />}
           {!loading && view === 'inquiries' && <InquiryList items={inquiries} />}
           {!loading && view === 'beliefs' && <BeliefList items={beliefs} />}
@@ -268,6 +278,119 @@ function ObservationForm({ onSaved }: { onSaved: () => Promise<void> }) {
       </div>
       {error && <p className="mt-2 text-xs text-red">{error}</p>}
     </form>
+  )
+}
+
+function RequestList({
+  items,
+  onAnswered,
+}: {
+  items: CognitiveInquiry[]
+  onAnswered: () => void
+}) {
+  const [open, setOpen] = useState<number | null>(null)
+  const [content, setContent] = useState('')
+  const [source, setSource] = useState('')
+  const [reliability, setReliability] = useState(0.8)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  if (!items.length) {
+    return <Empty text="Разум пока ничего не просит" />
+  }
+
+  async function submit(id: number) {
+    setSaving(true)
+    setError('')
+    try {
+      await answerInquiry(id, content, source, reliability)
+      setContent('')
+      setSource('')
+      setOpen(null)
+      onAnswered()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось отправить ответ')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="divide-y divide-border">
+      {items.map((item) => (
+        <div key={item.id} className="py-3">
+          <p className="text-sm leading-relaxed text-text">{item.question}</p>
+          <Meta
+            concepts={item.concept_names}
+            text={`вопрос #${item.id} · приоритет ${item.priority.toFixed(2)}`}
+          />
+          {open === item.id ? (
+            <div className="mt-3 grid gap-2 border-l border-border pl-4">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-widest text-text-dim">
+                  Ответ — один проверяемый факт
+                </span>
+                <textarea
+                  value={content}
+                  onChange={(event) => setContent(event.target.value)}
+                  rows={3}
+                  className="mt-1 w-full resize-y border border-border bg-deep px-3 py-2 text-sm text-text outline-none focus:border-accent/60"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-widest text-text-dim">Источник</span>
+                <input
+                  value={source}
+                  onChange={(event) => setSource(event.target.value)}
+                  className="mt-1 w-full border border-border bg-deep px-3 py-2 text-sm text-text outline-none focus:border-accent/60"
+                />
+              </label>
+              <label className="flex items-center gap-3 text-xs text-text-dim">
+                Надёжность
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={reliability}
+                  onChange={(event) => setReliability(Number(event.target.value))}
+                  className="min-w-0 flex-1 accent-accent"
+                />
+                <span className="w-10 text-right font-mono text-text">
+                  {reliability.toFixed(2)}
+                </span>
+              </label>
+              {error && <p className="text-xs text-red">{error}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={saving || !content.trim() || !source.trim()}
+                  onClick={() => void submit(item.id)}
+                  className="border border-accent/50 px-4 py-2 text-[10px] uppercase tracking-widest text-accent hover:bg-accent/10 disabled:opacity-40"
+                >
+                  {saving ? 'Отправляю' : 'Ответить разуму'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpen(null)}
+                  className="border border-border px-4 py-2 text-[10px] uppercase tracking-widest text-text-dim"
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setOpen(item.id); setError('') }}
+              className="mt-2 border border-border px-3 py-1 text-[10px] uppercase tracking-widest text-text-dim hover:border-accent/50 hover:text-accent"
+            >
+              Ответить
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
   )
 }
 

@@ -222,6 +222,25 @@ export async function fetchCognitivePredictions(): Promise<CognitivePrediction[]
   return handleResponse<CognitivePrediction[]>(res)
 }
 
+export async function fetchOperatorRequests(): Promise<CognitiveInquiry[]> {
+  const res = await fetch(`${BASE}/mind/requests?limit=20`, { headers: authHeaders() })
+  return handleResponse<CognitiveInquiry[]>(res)
+}
+
+export async function answerInquiry(
+  id: number,
+  content: string,
+  source: string,
+  reliability: number,
+): Promise<void> {
+  const res = await fetch(`${BASE}/mind/inquiries/${id}/answer`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ content, source, reliability }),
+  })
+  await handleResponse<unknown>(res)
+}
+
 export async function fetchCognitiveCycles(limit = 30): Promise<CognitiveCycle[]> {
   const res = await fetch(`${BASE}/mind/cycles?limit=${limit}`, { headers: authHeaders() })
   return handleResponse<CognitiveCycle[]>(res)

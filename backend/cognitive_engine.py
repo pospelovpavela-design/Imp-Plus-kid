@@ -618,6 +618,19 @@ async def run_cycle(
             top,
         )
 
+    operator_request = " ".join(str(critique.get("operator_request") or "").split())
+    if operator_request and operator_request.casefold() not in {"null", "none", "нет"}:
+        # Единственный канал наружу: не смешиваем с внутренними вопросами и
+        # держим отдельным приоритетом, чтобы он не тонул в тысяче своих
+        db.create_inquiry(
+            operator_request,
+            focus_names,
+            0.95,
+            db.OPERATOR_REQUEST_ORIGIN,
+            now,
+        )
+        logger.info("Mind asks the operator: %s", operator_request[:120])
+
     open_for_focus = db.count_open_inquiries_for_concepts(focus_names)
     if open_for_focus >= MAX_OPEN_INQUIRIES_PER_FOCUS:
         logger.info(

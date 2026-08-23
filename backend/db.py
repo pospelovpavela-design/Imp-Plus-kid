@@ -1454,14 +1454,55 @@ def create_inquiry(
         return int(cur.lastrowid)
 
 
+OPERATOR_REQUEST_ORIGIN = "operator_request"
+
+
 def get_next_inquiry(now: float) -> sqlite3.Row | None:
+    """Следующий вопрос для собственного цикла.
+
+    Просьбы к оператору исключены: своими силами разум их не решит, а в фокусе
+    они крутились бы вхолостую.
+    """
     with get_conn() as conn:
         return conn.execute(
             """SELECT * FROM inquiries
                WHERE status IN ('open', 'blocked') AND next_attempt_at <= ?
+                 AND origin <> ?
                ORDER BY priority DESC, updated_at ASC
                LIMIT 1""",
-            (now,),
+            (now, OPERATOR_REQUEST_ORIGIN),
+        ).fetchone()
+
+
+def list_operator_requests(limit: int = 20) -> list[sqlite3.Row]:
+    """Открытые просьбы разума к оператору, самые насущные первыми."""
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM inquiries
+               WHERE origin = ? AND status IN ('open', 'blocked')
+               ORDER BY priority DESC, created_at DESC
+               LIMIT ?""",
+            (OPERATOR_REQUEST_ORIGIN, limit),
+        ).fetchall()
+
+
+def resolve_inquiry(inquiry_id: int, result: str, now: float) -> bool:
+    """Закрыть вопрос ответом оператора."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE inquiries
+               SET status='resolved', last_result=?, next_attempt_at=?, updated_at=?
+               WHERE id=? AND status <> 'resolved'""",
+            (result[:2000], now, now, inquiry_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def get_inquiry(inquiry_id: int) -> sqlite3.Row | None:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM inquiries WHERE id=?", (inquiry_id,)
         ).fetchone()
 
 

@@ -16,7 +16,7 @@ interface Props {
   onGraphUpdate: (g: GraphData) => void
 }
 
-/** Extract [bracketed labels] from Claude's response text — these are unknowns
+/** Extract [bracketed labels] from the LLM response text — these are unknowns
  *  the mind flagged as not yet in the concept graph. We offer to add them. */
 function extractDiscoveries(text: string): string[] {
   const matches = text.match(/\[([^\]]+)\]/g) || []

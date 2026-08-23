@@ -28,11 +28,21 @@ BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "@imp_plus")
 
 
-def format_message(content: str) -> str:
-    return html.escape(content.strip())
+def format_message(content: str, request: str = "") -> str:
+    """Итог дня и, если он есть, один вопрос разума к оператору."""
+    text = html.escape(content.strip())
+    if request.strip():
+        text += "\n\n" + html.escape("Мне не хватает: " + " ".join(request.split()))
+    return text
 
 
-def send_telegram(content: str) -> bool:
+def pending_request() -> str:
+    """Самая насущная просьба разума. Канал наружу один, вопрос за раз тоже один."""
+    rows = db.list_operator_requests(limit=1)
+    return str(rows[0]["question"]) if rows else ""
+
+
+def send_telegram(content: str, request: str = "") -> bool:
     if not BOT_TOKEN or not CHANNEL:
         print("Telegram credentials are not configured", file=sys.stderr)
         return False
@@ -40,7 +50,7 @@ def send_telegram(content: str) -> bool:
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         json={
             "chat_id": CHANNEL,
-            "text": format_message(content),
+            "text": format_message(content, request),
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         },
@@ -73,7 +83,7 @@ def main() -> int:
         print(f"daily insight {insight['local_date']} already sent")
         return 0
 
-    if not send_telegram(insight["content"]):
+    if not send_telegram(insight["content"], pending_request()):
         return 1
     if not db.mark_daily_insight_sent(int(insight["id"]), time.time()):
         print("Daily insight was sent but sent_at was already set", file=sys.stderr)

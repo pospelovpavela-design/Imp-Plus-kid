@@ -2071,6 +2071,19 @@ def get_cognitive_metrics() -> dict:
             """SELECT COUNT(*) FROM concept_connections
                WHERE status='active' AND source='critic_accepted'"""
         ).fetchone()[0]
+        # Отозванное ребро меняет источник и выпадает из счёта активных, хотя
+        # работа по нему шла: считаем по свидетельствам, а не по состоянию.
+        edges_touched_by_cognition = conn.execute(
+            """SELECT COUNT(*) FROM (
+                   SELECT DISTINCT min(concept_a_id, concept_b_id) a,
+                                   max(concept_a_id, concept_b_id) b
+                   FROM relation_evidence
+                   WHERE verdict IN ('accept', 'support')
+               )"""
+        ).fetchone()[0]
+        retracted_edges = conn.execute(
+            "SELECT COUNT(*) FROM concept_connections WHERE source='critic_retracted'"
+        ).fetchone()[0]
         top_label_share = conn.execute(
             """SELECT COUNT(*) FROM concept_connections
                WHERE status='active'
@@ -2105,6 +2118,8 @@ def get_cognitive_metrics() -> dict:
             "active_edges": active_edges,
             "archived_edges": archived_edges,
             "cognitive_edges": cognitive_edges,
+            "edges_touched_by_cognition": edges_touched_by_cognition,
+            "retracted_edges": retracted_edges,
             "decayed_edges": decayed_edges,
             "displaced_edges": displaced_edges,
             "top_label_share": top_label_share / active_edges if active_edges else 0.0,

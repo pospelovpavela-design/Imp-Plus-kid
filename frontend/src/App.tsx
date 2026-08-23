@@ -23,18 +23,21 @@ export default function App() {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] })
   const [initialEvents, setInitialEvents] = useState<ThoughtEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
     if (!authed) return
+    setLoadError('')
     Promise.all([fetchGraph(), fetchStreamHistory(50)])
       .then(([g, events]) => {
         setGraphData(g)
         setInitialEvents(events)
       })
-      .catch(() => {
-        // Token may have expired
-        localStorage.removeItem('implus_token')
-        setAuthed(false)
+      .catch((err) => {
+        // Раньше сюда попадала любая ошибка и трактовалась как истёкший токен:
+        // один сорванный запрос — и вход сброшен. Просроченный токен даёт 401,
+        // и выход из него делает сам слой API.
+        setLoadError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
       })
       .finally(() => setLoading(false))
   }, [authed])
@@ -55,6 +58,11 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-void">
+      {loadError && (
+        <div className="border-b border-red/40 bg-red/10 px-4 py-2 text-xs text-red">
+          Не удалось загрузить данные разума: {loadError}. Вход сохранён — обновите страницу.
+        </div>
+      )}
       {/* Top nav bar */}
       <header className="flex items-center gap-0 border-b border-border shrink-0 bg-deep">
         {/* Logo */}

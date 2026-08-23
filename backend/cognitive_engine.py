@@ -187,15 +187,18 @@ def _definitions_context(names: list[str], limit: int = 14) -> str:
     определением доезжала до рассуждения как голое слово. Различать было нечем,
     отсюда и постоянное «различительный признак не обнаружен».
     """
+    unique = list(dict.fromkeys(names))[:limit]
     lines: list[str] = []
-    for name in names[:limit]:
+    seen: set[str] = set()
+    for name in unique:
         row = db.get_concept_by_name(name)
-        if row is None:
+        if row is None or row["name"] in seen:
             continue
+        seen.add(row["name"])
         definition = " ".join(str(row["definition"] or "").split())
         if definition:
             lines.append(f"- «{row['name']}»: {definition}")
-    for row in db.get_latest_working_definitions_for_names(names[:limit], 1):
+    for row in db.get_latest_working_definitions_for_names(unique, 1):
         working = " ".join(str(row["definition"] or "").split())
         if not working:
             continue

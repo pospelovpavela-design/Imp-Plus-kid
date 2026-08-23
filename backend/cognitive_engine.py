@@ -107,24 +107,38 @@ def _explore_focus(graph: Any, now: float) -> list[str]:
     Затем наименее заземлённые.
     """
     known = name_matching.build_index(graph.all_names())
-    pool: list[str] = []
-    # Порядок пула и есть приоритет: курсор идёт по нему с начала
-    for source in (
-        db.list_concepts_with_open_proposals(limit=20),
-        db.list_concepts_needing_grounding(limit=60),
-    ):
-        for row in source:
+
+    def resolve_all(rows) -> list[str]:
+        out: list[str] = []
+        for row in rows:
             resolved = name_matching.resolve(row["name"], known)
-            if resolved is not None and resolved not in pool:
-                pool.append(resolved)
-    if len(pool) >= 2:
-        raw = db.get_cognitive_state("exploration_cursor")
+            if resolved is not None and resolved not in out:
+                out.append(resolved)
+        return out
+
+    def take(pool: list[str], cursor_key: str) -> str:
+        """Следующее имя из пула по собственному курсору пула."""
+        raw = db.get_cognitive_state(cursor_key)
         try:
             cursor = int(raw or 0)
         except ValueError:
             cursor = 0
-        first = pool[cursor % len(pool)]
-        db.set_cognitive_state("exploration_cursor", str((cursor + 1) % len(pool)), now)
+        db.set_cognitive_state(cursor_key, str((cursor + 1) % len(pool)), now)
+        return pool[cursor % len(pool)]
+
+    proposed = resolve_all(db.list_concepts_with_open_proposals(limit=20))
+    ungrounded = resolve_all(db.list_concepts_needing_grounding(limit=60))
+    pool = list(dict.fromkeys([*proposed, *ungrounded]))
+
+    # Курсор у каждого пула свой: общий курсор по объединённому списку прыгал
+    # мимо предложений, и обещанный приоритет не работал
+    if proposed:
+        first = take(proposed, "proposal_cursor")
+    elif ungrounded:
+        first = take(ungrounded, "exploration_cursor")
+    else:
+        first = ""
+    if first and len(pool) >= 2:
         second = random.choice([name for name in pool if name != first])
         return [first, second]
     pair = graph.random_two_concepts()

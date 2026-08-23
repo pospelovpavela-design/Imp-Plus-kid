@@ -137,7 +137,10 @@ def retrieve_memories(
 
     chosen = tagged[:limit]
     chosen += worded[: max(0, min(WORDED_LIMIT, limit - len(chosen)))]
-    chosen += background[: max(0, min(BACKGROUND_LIMIT, limit - len(chosen)))]
+    # Постороннее — только если по фокусу не нашлось вообще ничего. Показать
+    # скудную память честнее, чем добить её до полного списка чужими эпизодами.
+    if not chosen:
+        chosen = background[:BACKGROUND_LIMIT]
     selected = [row for _, row in chosen[:limit]]
     lines = []
     event_ids = []

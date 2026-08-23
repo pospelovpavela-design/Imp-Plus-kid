@@ -28,6 +28,12 @@ EVIDENCE_TYPES: tuple[str, ...] = (
 )
 
 
+# Эпизоды, где концепция фокуса лишь упомянута словом, а не помечена
+WORDED_LIMIT = 3
+# Эпизоды, не связанные с фокусом вовсе: только чтобы дополнить выборку
+BACKGROUND_LIMIT = 2
+
+
 def _evidence_types() -> tuple[str, ...] | None:
     """None означает «брать события любого типа»."""
     flag = os.environ.get("MEMORY_INCLUDE_SPONTANEOUS", "").strip().casefold()
@@ -80,7 +86,8 @@ def retrieve_memories(
 
     focus = {name.casefold() for name in concept_names}
     query_tokens = set(_tokens(query, limit=16))
-    scored: list[tuple[float, dict]] = []
+    tagged: list[tuple[float, dict]] = []
+    worded: list[tuple[float, dict]] = []
     background: list[tuple[float, dict]] = []
     seen_content: set[str] = set()
     for row in by_id.values():
@@ -111,21 +118,27 @@ def retrieve_memories(
             + lexical * 0.15
             + type_bonus
         )
-        # Свежие и надёжные записи о постороннем предмете попадали в выборку
-        # наравне с относящимися к делу: исследовательский цикл выбирал новый
-        # фокус, а память возвращала его в старую колею.
-        relevant = (
-            overlap > 0
-            or int(row["id"]) in matched_ids
-            or bool(query_tokens & set(_tokens(content, limit=40)))
+        # Три уровня, а не два. Эпизод, помеченный концепцией фокуса, говорит
+        # о ней; эпизод, где слово лишь произнесено, — нет. Почти каждое
+        # наблюдение начинается с «В памяти зафиксировано», и по слову «память»
+        # выборка целиком уходила в старую тему.
+        mentions = int(row["id"]) in matched_ids or bool(
+            query_tokens & set(_tokens(content, limit=40))
         )
-        (scored if relevant else background).append((score, row))
+        if overlap > 0:
+            tagged.append((score, row))
+        elif mentions:
+            worded.append((score, row))
+        else:
+            background.append((score, row))
 
-    scored.sort(key=lambda item: item[0], reverse=True)
-    background.sort(key=lambda item: item[0], reverse=True)
-    # Постороннее берём только чтобы дополнить, и не больше двух записей
-    filler = background[: max(0, min(2, limit - len(scored)))]
-    selected = [row for _, row in [*scored[:limit], *filler]][:limit]
+    for bucket in (tagged, worded, background):
+        bucket.sort(key=lambda item: item[0], reverse=True)
+
+    chosen = tagged[:limit]
+    chosen += worded[: max(0, min(WORDED_LIMIT, limit - len(chosen)))]
+    chosen += background[: max(0, min(BACKGROUND_LIMIT, limit - len(chosen)))]
+    selected = [row for _, row in chosen[:limit]]
     lines = []
     event_ids = []
     mentioned: dict[str, int] = {}

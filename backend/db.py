@@ -316,6 +316,19 @@ def _init_cognitive_schema() -> None:
                 updated_at REAL NOT NULL
             );
 
+            -- Временные ярлыки [в скобках]: разум называет ими неназванное.
+            -- Концепцией ярлык становится, только повторившись в разных циклах.
+            CREATE TABLE IF NOT EXISTS label_candidates (
+                normalized   TEXT PRIMARY KEY,
+                label        TEXT    NOT NULL,
+                occurrences  INTEGER NOT NULL DEFAULT 1,
+                cycle_ids    TEXT    NOT NULL DEFAULT '[]',
+                first_seen   REAL    NOT NULL,
+                last_seen    REAL    NOT NULL,
+                promoted_at  REAL,
+                concept_id   INTEGER
+            );
+
             CREATE TABLE IF NOT EXISTS daily_insights (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 local_date       TEXT    NOT NULL UNIQUE,
@@ -891,6 +904,78 @@ def list_unanswered_proposals(
                 LIMIT ?""",
             (*concept_ids, *concept_ids, limit),
         ).fetchall()
+
+
+def record_label_candidate(
+    label: str,
+    normalized: str,
+    cycle_id: int | None,
+    now: float,
+) -> int:
+    """Отметить встречу временного ярлыка. Возвращает число разных циклов."""
+    label = " ".join(label.split()).strip()
+    if not label or not normalized:
+        return 0
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT occurrences, cycle_ids FROM label_candidates WHERE normalized=?",
+            (normalized,),
+        ).fetchone()
+        if row is None:
+            cycles = [cycle_id] if cycle_id is not None else []
+            conn.execute(
+                """INSERT INTO label_candidates
+                   (normalized, label, occurrences, cycle_ids, first_seen, last_seen)
+                   VALUES (?, ?, 1, ?, ?, ?)""",
+                (normalized, label, json.dumps(cycles), now, now),
+            )
+            conn.commit()
+            return len(cycles)
+        try:
+            cycles = json.loads(row["cycle_ids"] or "[]")
+        except json.JSONDecodeError:
+            cycles = []
+        if cycle_id is not None and cycle_id not in cycles:
+            cycles.append(cycle_id)
+        conn.execute(
+            """UPDATE label_candidates
+               SET occurrences=occurrences + 1, cycle_ids=?, last_seen=?, label=?
+               WHERE normalized=?""",
+            (json.dumps(cycles), now, label, normalized),
+        )
+        conn.commit()
+        return len(cycles)
+
+
+def list_ripe_label_candidates(min_cycles: int, limit: int = 5) -> list[sqlite3.Row]:
+    """Ярлыки, встреченные в достаточном числе разных циклов и ещё не ставшие концепцией."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM label_candidates
+               WHERE promoted_at IS NULL
+               ORDER BY occurrences DESC, last_seen DESC"""
+        ).fetchall()
+    ripe = []
+    for row in rows:
+        try:
+            cycles = json.loads(row["cycle_ids"] or "[]")
+        except json.JSONDecodeError:
+            cycles = []
+        if len(cycles) >= min_cycles:
+            ripe.append(row)
+        if len(ripe) >= limit:
+            break
+    return ripe
+
+
+def mark_label_promoted(normalized: str, concept_id: int | None, now: float) -> None:
+    """Закрыть ярлык: он стал концепцией либо признан лишним."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE label_candidates SET promoted_at=?, concept_id=? WHERE normalized=?",
+            (now, concept_id, normalized),
+        )
+        conn.commit()
 
 
 def list_concepts_with_open_proposals(limit: int = 20) -> list[sqlite3.Row]:

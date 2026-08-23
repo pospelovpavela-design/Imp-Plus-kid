@@ -550,6 +550,43 @@ inconclusive, а quote оставь пустым.
     return {"matches": matches if isinstance(matches, list) else []}
 
 
+async def define_autonomous_concept(
+    label: str,
+    occurrences: int,
+    existing_names: list[str],
+    mind_age: str,
+    connection_count: int,
+    definitions_context: str = "",
+) -> dict:
+    """Превратить повторяющийся временный ярлык в определяемую концепцию."""
+    system = _build_system(
+        mind_age,
+        len(existing_names),
+        connection_count,
+        existing_names,
+        definitions_context=definitions_context,
+    )
+    prompt = f"""Временный ярлык «{label}» ты вводил уже в {occurrences} разных циклах.
+Реши, заслуживает ли он собственного имени в графе.
+
+Дай имя, только если названное им нельзя выразить существующей концепцией или
+парой существующих. Если можно — откажись и назови ту концепцию, которая его
+покрывает. Отказ здесь такой же честный результат, как и новое имя: словарь,
+растущий быстрее опыта, различений не прибавляет.
+
+Определение строй через свои концепции, а не через внешнее знание.
+
+Верни строго JSON:
+{{
+  "verdict": "create | covered",
+  "name": "<короткое имя без скобок, 1-3 слова>",
+  "definition": "<1-2 предложения через существующие концепции>",
+  "covered_by": "<точное имя концепции, если verdict=covered, иначе null>",
+  "reason": "<почему именно так>"
+}}"""
+    return await _json_completion(system, prompt, max_tokens=600)
+
+
 # ── Milestone reflection ──────────────────────────────────────────────────
 
 async def generate_milestone_reflection(

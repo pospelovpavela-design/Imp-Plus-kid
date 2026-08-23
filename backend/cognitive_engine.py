@@ -43,6 +43,9 @@ GRAPH_SELECTION_BUDGET_DEFAULT = 60
 GRAPH_DEGREE_CAP_DEFAULT = 24
 
 _WORD_RE = re.compile(r"[^\W_]{3,}", flags=re.UNICODE)
+_LABEL_RE = re.compile(r"\[([^\[\]]{3,60})\]")
+# Ярлык становится концепцией, только повторившись в разных циклах
+AUTONOMOUS_LABEL_MIN_CYCLES = 3
 
 
 def _json_list(raw: str | None) -> list:
@@ -178,6 +181,100 @@ def _working_names(
         if row["name"] not in names:
             names.append(row["name"])
     return names
+
+
+def _harvest_labels(text: str, cycle_id: int | None, graph: Any, now: float) -> None:
+    """Собрать временные ярлыки [в скобках] из текста цикла.
+
+    Разум исправно называет неназванное, но за четыре месяца из 159 ярлыков
+    отдельной концепцией стал ровно один: их никто не считал.
+    """
+    known = name_matching.build_index(graph.all_names())
+    for raw in _LABEL_RE.findall(text or ""):
+        label = " ".join(raw.split()).strip()
+        normalized = name_matching.normalize(label)
+        if not normalized or name_matching.resolve(label, known) is not None:
+            continue
+        db.record_label_candidate(label, normalized, cycle_id, now)
+
+
+async def maybe_create_concept(graph: Any, born_at: float) -> dict | None:
+    """Дать имя ярлыку, который сам себя доказал повторением.
+
+    Прежний автосинтез работал без ворот и за четыре месяца породил 4853
+    неологизма и куст синонимов. Здесь ярлык обязан повториться в разных
+    циклах, не совпасть с существующим именем и пройти отказ модели.
+    """
+    minimum = _positive_env("AUTONOMOUS_LABEL_MIN_CYCLES", AUTONOMOUS_LABEL_MIN_CYCLES)
+    ripe = db.list_ripe_label_candidates(minimum, limit=1)
+    if not ripe:
+        return None
+    row = ripe[0]
+    now = time.time()
+    label = str(row["label"])
+    known = name_matching.build_index(graph.all_names())
+    if name_matching.resolve(label, known) is not None:
+        db.mark_label_promoted(str(row["normalized"]), None, now)
+        return None
+
+    names = graph.all_names()
+    td = get_time_display(born_at)
+    try:
+        cycles = json.loads(row["cycle_ids"] or "[]")
+    except (TypeError, json.JSONDecodeError):
+        cycles = []
+    result = await mind_engine.define_autonomous_concept(
+        label,
+        len(cycles),
+        graph.relevant_names([label], limit=36) or names[:36],
+        td.mind_age_human,
+        graph.edge_count(),
+        _definitions_context(names[:14]),
+    )
+    verdict = str(result.get("verdict") or "").strip().casefold()
+    name = " ".join(str(result.get("name") or "").split()).strip(" []")
+    definition = " ".join(str(result.get("definition") or "").split())
+    reason = " ".join(str(result.get("reason") or "").split())
+
+    if verdict != "create" or not name or not definition:
+        db.mark_label_promoted(str(row["normalized"]), None, now)
+        logger.info(
+            "Label %r left unnamed: %s", label, result.get("covered_by") or reason or verdict
+        )
+        return None
+    if name_matching.resolve(name, known) is not None:
+        db.mark_label_promoted(str(row["normalized"]), None, now)
+        logger.info("Label %r resolves to an existing concept as %r", label, name)
+        return None
+
+    concept_id = graph.add_concept(
+        name, definition, td.mind_display, now, is_autonomous=True
+    )
+    db.mark_label_promoted(str(row["normalized"]), concept_id, now)
+    content = (
+        f"Разум самостоятельно назвал повторяющееся неназванное «{label}» "
+        f"концепцией «{name}»: {definition}"
+    )
+    mind_time = format_mind_timestamp(born_at, now)
+    event_id = db.insert_stream_event(
+        mind_time, "autonomous", content, [name], now, salience=0.9, reliability=0.6
+    )
+    db.create_inquiry(
+        f"Какие связи концепции «{name}» подтверждаются памятью или основаниями?",
+        [name],
+        0.85,
+        "autonomous_concept",
+        now,
+    )
+    logger.info("Autonomous concept created: %s (from label %r)", name, label)
+    return {
+        "id": event_id,
+        "mind_time": mind_time,
+        "type": "autonomous",
+        "content": content,
+        "concepts_involved": [name],
+        "created_at": now,
+    }
 
 
 def _definitions_context(names: list[str], limit: int = 14) -> str:
@@ -495,6 +592,22 @@ async def run_cycle(
                 reason=reason[:1000],
             )
             graph.sync_connection(source["id"], target["id"])
+
+    _harvest_labels(
+        " ".join(
+            str(part or "")
+            for part in (
+                candidate.get("observation"),
+                candidate.get("uncertainty"),
+                candidate.get("next_question"),
+                critique.get("revised_observation"),
+                critique.get("reason"),
+            )
+        ),
+        cycle_id,
+        graph,
+        now,
+    )
 
     if unresolved:
         top = ", ".join(f"{name} ×{n}" for name, n in Counter(unresolved).most_common(5))

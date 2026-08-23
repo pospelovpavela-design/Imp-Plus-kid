@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   addExternalObservation,
   fetchCognitiveBeliefs,
+  fetchCognitiveCycles,
   fetchCognitiveInquiries,
   fetchCognitiveMetrics,
   fetchCognitivePredictions,
@@ -11,14 +12,16 @@ import {
 } from '../api'
 import type {
   CognitiveBelief,
+  CognitiveCycle,
   CognitiveInquiry,
+  CycleRelation,
   CognitiveMetrics,
   CognitivePrediction,
   ExternalObservation,
   SelfModelEntry,
 } from '../types'
 
-type View = 'inquiries' | 'beliefs' | 'predictions' | 'self'
+type View = 'cycles' | 'inquiries' | 'beliefs' | 'predictions' | 'self'
 
 const EMPTY_METRICS: CognitiveMetrics = {
   concepts: 0,
@@ -43,12 +46,13 @@ const EMPTY_METRICS: CognitiveMetrics = {
 }
 
 export default function MetacognitionView() {
-  const [view, setView] = useState<View>('inquiries')
+  const [view, setView] = useState<View>('cycles')
   const [metrics, setMetrics] = useState<CognitiveMetrics>(EMPTY_METRICS)
   const [inquiries, setInquiries] = useState<CognitiveInquiry[]>([])
   const [beliefs, setBeliefs] = useState<CognitiveBelief[]>([])
   const [predictions, setPredictions] = useState<CognitivePrediction[]>([])
   const [selfModel, setSelfModel] = useState<SelfModelEntry[]>([])
+  const [cycles, setCycles] = useState<CognitiveCycle[]>([])
   const [observations, setObservations] = useState<ExternalObservation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -56,21 +60,30 @@ export default function MetacognitionView() {
   async function refresh() {
     setError('')
     try {
-      const [nextMetrics, nextInquiries, nextBeliefs, nextPredictions, nextSelf, nextObservations] =
-        await Promise.all([
-          fetchCognitiveMetrics(),
-          fetchCognitiveInquiries(),
-          fetchCognitiveBeliefs(),
-          fetchCognitivePredictions(),
-          fetchSelfModel(),
-          fetchExternalObservations(),
-        ])
+      const [
+        nextMetrics,
+        nextInquiries,
+        nextBeliefs,
+        nextPredictions,
+        nextSelf,
+        nextObservations,
+        nextCycles,
+      ] = await Promise.all([
+        fetchCognitiveMetrics(),
+        fetchCognitiveInquiries(),
+        fetchCognitiveBeliefs(),
+        fetchCognitivePredictions(),
+        fetchSelfModel(),
+        fetchExternalObservations(),
+        fetchCognitiveCycles(),
+      ])
       setMetrics(nextMetrics)
       setInquiries(nextInquiries)
       setBeliefs(nextBeliefs)
       setPredictions(nextPredictions)
       setSelfModel(nextSelf)
       setObservations(nextObservations)
+      setCycles(nextCycles)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
     } finally {
@@ -109,6 +122,7 @@ export default function MetacognitionView() {
 
         <div className="mt-6 flex overflow-x-auto border-b border-border">
           {([
+            ['cycles', `Ход мысли ${metrics.cognitive_cycles}`],
             ['inquiries', `Вопросы ${metrics.open_inquiries}`],
             ['beliefs', `Убеждения ${beliefs.length}`],
             ['predictions', `Прогнозы ${metrics.pending_predictions}`],
@@ -131,6 +145,7 @@ export default function MetacognitionView() {
 
         <div className="py-3">
           {loading && <p className="py-8 text-center text-xs text-text-dim">Загрузка...</p>}
+          {!loading && view === 'cycles' && <CycleList items={cycles} />}
           {!loading && view === 'inquiries' && <InquiryList items={inquiries} />}
           {!loading && view === 'beliefs' && <BeliefList items={beliefs} />}
           {!loading && view === 'predictions' && (
@@ -253,6 +268,161 @@ function ObservationForm({ onSaved }: { onSaved: () => Promise<void> }) {
       </div>
       {error && <p className="mt-2 text-xs text-red">{error}</p>}
     </form>
+  )
+}
+
+const VERDICT_STYLE: Record<string, string> = {
+  accept: 'border-teal/50 text-teal',
+  revise: 'border-accent/50 text-accent',
+  needs_evidence: 'border-gold/50 text-gold',
+  reject: 'border-red/50 text-red',
+}
+
+function Relation({ item, muted }: { item: CycleRelation; muted?: boolean }) {
+  const numbers = [
+    item.strength !== undefined ? `сила ${item.strength.toFixed(2)}` : '',
+    item.confidence !== undefined ? `уверенность ${item.confidence.toFixed(2)}` : '',
+  ].filter(Boolean).join(' · ')
+  return (
+    <li className={`py-1 text-xs leading-relaxed ${muted ? 'text-text-dim' : 'text-text'}`}>
+      <span className="font-mono">{item.source}</span>
+      <span className="text-text-dim"> — {item.relationship} — </span>
+      <span className="font-mono">{item.target}</span>
+      {numbers && <span className="ml-2 font-mono text-[10px] text-text-dim/70">{numbers}</span>}
+      {item.reason && <p className="mt-0.5 text-[11px] text-text-dim">{item.reason}</p>}
+    </li>
+  )
+}
+
+function Block({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-widest text-text-dim">{title}</p>
+      <div className="mt-1">{children}</div>
+    </div>
+  )
+}
+
+function CycleList({ items }: { items: CognitiveCycle[] }) {
+  const [open, setOpen] = useState<number | null>(items.length ? items[0].id : null)
+  if (!items.length) return <Empty text="Циклов пока нет" />
+  return (
+    <div className="divide-y divide-border">
+      {items.map((item) => {
+        const expanded = open === item.id
+        const accepted = item.critique.accepted_relations ?? []
+        const proposed = item.candidate.relations ?? []
+        const declined = proposed.filter(
+          (rel) => !accepted.some((ok) => ok.source === rel.source && ok.target === rel.target),
+        )
+        const contradictions = item.critique.contradictions ?? []
+        const prediction = item.candidate.prediction
+        return (
+          <div key={item.id} className="py-3">
+            <button
+              type="button"
+              onClick={() => setOpen(expanded ? null : item.id)}
+              className="flex w-full items-start gap-3 text-left"
+            >
+              <span
+                className={`h-fit w-fit shrink-0 border px-2 py-1 text-[9px] uppercase tracking-widest ${
+                  VERDICT_STYLE[item.verdict] ?? 'border-border text-text-dim'
+                }`}
+              >
+                {item.verdict}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-text">{item.focus}</span>
+                <span className="mt-1 block font-mono text-[10px] text-text-dim/70">
+                  цикл {item.id} · {item.trigger} · надёжность {item.reliability.toFixed(2)} ·{' '}
+                  {expanded ? 'свернуть' : 'раскрыть'}
+                </span>
+              </span>
+            </button>
+
+            {expanded && (
+              <div className="mt-3 grid gap-3 border-l border-border pl-4">
+                {item.candidate.observation && (
+                  <Block title="Гипотеза">
+                    <p className="text-sm leading-relaxed text-text">{item.candidate.observation}</p>
+                  </Block>
+                )}
+                {item.critique.revised_observation && (
+                  <Block title="После правки критика">
+                    <p className="text-sm leading-relaxed text-text">
+                      {item.critique.revised_observation}
+                    </p>
+                  </Block>
+                )}
+                {item.critique.reason && (
+                  <Block title="Обоснование критика">
+                    <p className="text-xs leading-relaxed text-text-dim">{item.critique.reason}</p>
+                  </Block>
+                )}
+                {accepted.length > 0 && (
+                  <Block title={`Принятые связи (${accepted.length})`}>
+                    <ul className="divide-y divide-border/50">
+                      {accepted.map((rel, index) => (
+                        <Relation key={`a${index}`} item={rel} />
+                      ))}
+                    </ul>
+                  </Block>
+                )}
+                {declined.length > 0 && (
+                  <Block title={`Отклонённые связи (${declined.length})`}>
+                    <ul className="divide-y divide-border/50">
+                      {declined.map((rel, index) => (
+                        <Relation key={`d${index}`} item={rel} muted />
+                      ))}
+                    </ul>
+                  </Block>
+                )}
+                {contradictions.length > 0 && (
+                  <Block title="Противоречия">
+                    <ul className="grid gap-1">
+                      {contradictions.map((text, index) => (
+                        <li key={index} className="text-xs leading-relaxed text-gold">
+                          {text}
+                        </li>
+                      ))}
+                    </ul>
+                  </Block>
+                )}
+                {item.candidate.uncertainty && (
+                  <Block title="Неопределённость">
+                    <p className="text-xs leading-relaxed text-text-dim">
+                      {item.candidate.uncertainty}
+                    </p>
+                  </Block>
+                )}
+                {item.candidate.next_question && (
+                  <Block title="Следующий вопрос">
+                    <p className="text-xs leading-relaxed text-text">
+                      {item.candidate.next_question}
+                    </p>
+                  </Block>
+                )}
+                {prediction?.statement && (
+                  <Block title="Прогноз">
+                    <p className="text-xs leading-relaxed text-text">{prediction.statement}</p>
+                    {prediction.test_method && (
+                      <p className="mt-0.5 text-[11px] text-text-dim">
+                        проверка: {prediction.test_method}
+                      </p>
+                    )}
+                  </Block>
+                )}
+                <p className="font-mono text-[10px] text-text-dim/70">
+                  опора: {item.memory_event_ids.length
+                    ? item.memory_event_ids.join(', ')
+                    : 'эпизоды не извлечены'}
+                </p>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 

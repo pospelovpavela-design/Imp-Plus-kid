@@ -10,6 +10,7 @@ import type {
   CognitiveInquiry,
   CognitiveBelief,
   CognitivePrediction,
+  CognitiveCycle,
   SelfModelEntry,
   ExternalObservation,
   DailyInsight,
@@ -219,6 +220,11 @@ export async function fetchCognitiveBeliefs(): Promise<CognitiveBelief[]> {
 export async function fetchCognitivePredictions(): Promise<CognitivePrediction[]> {
   const res = await fetch(`${BASE}/mind/predictions?limit=100`, { headers: authHeaders() })
   return handleResponse<CognitivePrediction[]>(res)
+}
+
+export async function fetchCognitiveCycles(limit = 30): Promise<CognitiveCycle[]> {
+  const res = await fetch(`${BASE}/mind/cycles?limit=${limit}`, { headers: authHeaders() })
+  return handleResponse<CognitiveCycle[]>(res)
 }
 
 export async function fetchSelfModel(): Promise<SelfModelEntry[]> {

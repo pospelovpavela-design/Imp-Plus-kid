@@ -204,6 +204,42 @@ export interface CognitivePrediction {
   resolved_at: number | null
 }
 
+export interface CycleRelation {
+  source: string
+  target: string
+  relationship: string
+  strength?: number
+  confidence?: number
+  reason?: string
+}
+
+export interface CognitiveCycle {
+  id: number
+  trigger: string
+  focus: string
+  inquiry_id: number | null
+  verdict: 'accept' | 'revise' | 'needs_evidence' | 'reject'
+  reliability: number
+  created_at: number
+  memory_event_ids: number[]
+  candidate: {
+    observation?: string
+    uncertainty?: string
+    next_question?: string | null
+    relations?: CycleRelation[]
+    evidence_memory_ids?: number[]
+    prediction?: { statement?: string; test_method?: string; confidence?: number } | null
+  }
+  critique: {
+    verdict?: string
+    reason?: string
+    revised_observation?: string | null
+    accepted_relations?: CycleRelation[]
+    contradictions?: string[]
+    inquiry_resolved?: boolean
+  }
+}
+
 export interface SelfModelEntry {
   key: string
   value: string

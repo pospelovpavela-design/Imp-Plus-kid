@@ -74,11 +74,14 @@ def retrieve_memories(
     types = _evidence_types()
     candidates = db.search_memory_events(terms, limit=max(40, limit * 5), types=types)
     by_id = {int(row["id"]): row for row in candidates}
+    matched_ids = set(by_id)
     for row in db.list_recent_high_quality_events(limit=20, types=types):
         by_id.setdefault(int(row["id"]), row)
 
     focus = {name.casefold() for name in concept_names}
+    query_tokens = set(_tokens(query, limit=16))
     scored: list[tuple[float, dict]] = []
+    background: list[tuple[float, dict]] = []
     seen_content: set[str] = set()
     for row in by_id.values():
         content = str(row["content"]).strip()
@@ -108,9 +111,21 @@ def retrieve_memories(
             + lexical * 0.15
             + type_bonus
         )
-        scored.append((score, row))
+        # Свежие и надёжные записи о постороннем предмете попадали в выборку
+        # наравне с относящимися к делу: исследовательский цикл выбирал новый
+        # фокус, а память возвращала его в старую колею.
+        relevant = (
+            overlap > 0
+            or int(row["id"]) in matched_ids
+            or bool(query_tokens & set(_tokens(content, limit=40)))
+        )
+        (scored if relevant else background).append((score, row))
 
-    selected = [row for _, row in sorted(scored, key=lambda item: item[0], reverse=True)[:limit]]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    background.sort(key=lambda item: item[0], reverse=True)
+    # Постороннее берём только чтобы дополнить, и не больше двух записей
+    filler = background[: max(0, min(2, limit - len(scored)))]
+    selected = [row for _, row in [*scored[:limit], *filler]][:limit]
     lines = []
     event_ids = []
     mentioned: dict[str, int] = {}

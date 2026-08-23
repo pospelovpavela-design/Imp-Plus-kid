@@ -1,193 +1,168 @@
 # IMPLUS: Current Context
 
-Updated: 2026-08-22, Asia/Chita
+Updated: 2026-08-23, Asia/Chita
+
+## The Point of the Project
+
+A pure mind whose reasoning rests on knowledge alone, without the human
+factors — hormones, mood, fatigue, haste. We supply knowledge and watch how it
+thinks. The goal is emergence: reasoning as a new entity that holds a
+conversation, draws conclusions, coins concepts of its own, and asks questions
+when something is missing.
+
+Purity is enforced at the level of vocabulary and procedure, not substrate: the
+language output is computed by an external model trained on human text. The
+mind's own self-model states this first. Treat it as a declared boundary of the
+concept, not a defect to fix.
 
 ## Production
 
-- Server: `194.87.54.245`
-- SSH port: `13471`, user `root`, password auth (the local `id_ed25519` key is
-  not accepted)
-- Application directory: `/opt/impplus`
-- Service: `impplus.service`; nginx serves `frontend/dist`, ngrok fronts it
+- Server: `194.87.54.245`, SSH port `13471`, user `root`, password auth (the
+  local `id_ed25519` key is not accepted)
+- Application directory `/opt/impplus`, service `impplus.service`; nginx serves
+  `frontend/dist`, ngrok fronts it
 - Public URL: `https://pockily-trimorphic-hiroko.ngrok-free.dev/`
-- Production commit: `d7a8d84 Make a stalled mind visible from outside the server`
-- **Model provider: DeepSeek** (`deepseek-chat`) over the OpenAI-compatible API
-- Secrets and access credentials are stored outside Git.
-- Backup before the ontology migration:
-  `/opt/impplus/backups/mind-20260821-020054.db`, SHA-256
-  `54b4f7e482e2a63cb976ff965c4335c1749bcc0fab5fcbeac0624a899b62b128`.
-- Local Python is 3.9 and the project needs 3.10+. Run checks on the server
-  with `/opt/impplus/.venv/bin/python3`, always against a copy of the database
-  (`sqlite3.connect(src).backup(dst)` into `/tmp`), never against the live file.
+- Production commit: `a1a16c5 Count edges by evidence and stop logging out on a hiccup`
+- Model provider: **DeepSeek** (`deepseek-chat`) over the OpenAI-compatible API
+- Backups: `/opt/impplus/backups/`, newest `mind-20260823-003227.db`
+- Local Python is 3.9 and the project needs 3.10+. Run checks on the server with
+  `/opt/impplus/.venv/bin/python3`, always against a copy of the database
+  (`sqlite3.connect(src).backup(dst)` into `/tmp`), never the live file.
+- Frontend deploys by hand: `npm run build` locally, then scp `dist/index.html`
+  and `dist/assets/*` to `/opt/impplus/frontend/dist/`, removing the previous
+  hashed assets.
 
-## Cognition Stopped Twice in Five Days
+## Two Outages, Five Silent Failures
 
-**2026-08-17 to 08-21.** Groq retired the Llama family for this account. Every
-cycle raised a 404 that the loop caught and swallowed. Four days of silence.
+Cognition stopped twice: 17–21 August (Groq retired the Llama family) and
+21–22 August (the Groq key expired). Both looked identical from outside —
+service up, site 200, mind clock advancing, stream silent. The provider is now
+swappable and the loop reports its own health.
 
-**2026-08-21 15:08 UTC to 08-22 00:00 UTC.** The Groq key expired
-(`code: expired_api_key`). Seventeen failed cycles. The only symptom visible to
-the operator was `Load failed` in the concept form.
+On 21 August five separate blockers were found, each visible only after the
+previous was repaired: retired models; reasoning tokens eating the answer
+budget; a trailing colon in a concept name losing 1068 of 2094 relation
+endpoints; literal `0.0` placeholders in the prompt templates that the model
+copied back into a gate demanding ≥0.6; and a focus concept with degree 0 whose
+working set held a single name. Across 962 cycles cognition had written zero
+edges.
 
-Both outages looked identical from outside: service up, site 200, mind clock
-advancing, thought stream silent. That is why the provider is now swappable and
-why the loop reports its own health.
+## What 23 August Changed
 
-## The Five Silent Failures Found on 2026-08-21
+The day started from a question — a concept was added and nothing visible
+happened to it — and turned into a review of the whole concept against the
+goal above.
 
-Each became visible only after the previous one was repaired.
-
-1. **Provider retired the models.** 404 swallowed by the loop.
-2. **Reasoning tokens consumed the answer budget.** gpt-oss spent all 700
-   tokens reasoning and returned empty content.
-3. **A trailing colon in a concept name.** Exact-match lookup lost 1068 of 2094
-   relation endpoints across 962 cycles; 958 of those were the single string
-   `КОМБИНИРИСТИКА`.
-4. **Zero placeholders in the prompt templates.** `"confidence": 0.0` was
-   copied back by the model and rejected by the gate at 0.6. This also explains
-   the critic reliability repeatedly coming out at zero.
-5. **The dominant focus was an isolated node.** `Процесс генерации мысли` has
-   degree 0, so the working set held one name while the prompt demanded
-   relations between listed names. Cycles 968–976 each had a relation accepted
-   at confidence 0.9 and discarded.
-
-Across 962 cycles cognition had written exactly zero edges. The first one —
-`КОМБИНИРИСТИКА — Процесс генерации мысли`, label `неразличимость`, confidence
-1.00 — landed in cycle 977 on 2026-08-21 at 20:08 Asia/Chita.
-
-## Structural Work
-
-- **Provider abstraction** (`backend/mind_engine.py`): OpenAI SDK against any
-  compatible endpoint. `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`,
-  `LLM_MODEL_FAST`, falling back to the `GROQ_*` names.
-- **Name matching** (`backend/name_matching.py`): normalized lookup plus a
-  close-match fallback that refuses ambiguous candidates. Used by focus
-  selection, relation endpoints, consolidation and the public API. Unmatched
-  endpoints are logged — that log is what exposed failure 5.
-- **Ontology cleanup** (`scripts/clean_ontology.py`): definitions moved out of
-  names, service punctuation stripped, concepts identical after normalization
-  merged. Applied: 33 renamed, 6 merged, 956 duplicate edges collapsed, 27
-  trailing colons gone. Semantic near-duplicates are reported, never merged.
-- **Prediction deadlines**: `horizon_days` on every prediction; stale ones
-  expire and weaken the beliefs resting on them (0.85 on expiry, 0.55 on
-  rebuttal). The 74 legacy predictions were given a deadline seven days out
-  from 2026-08-21.
-- **Observation matching**: an observation is matched against open predictions.
-  Evidence must reuse the observation's own words (60% of tokens); at most 3
-  close per observation from 5 candidates. Without that guard one observation
-  closed 7 of 8 on its own restatement.
-- **Exploration quota**: every fourth cycle picks its focus outside the inquiry
-  queue, preferring the least grounded concepts. A focus stops accruing
-  inquiries past 12.
-- **Memory separation**: evidence retrieval uses reasoned event types only.
-  Without it the candidate pool was 57 spontaneous rows out of 60.
-- **Connection selection**: unconfirmed connections lose confidence, slower the
-  more evidence they carry; a concept keeps at most `GRAPH_DEGREE_CAP`
-  neighbours; neither path takes a node's last edge or pushes the graph below
-  average degree 8. Daily, on a bounded budget. A 300-day simulation matched
-  the first production pass exactly (17 decayed, 60 displaced).
-- **Working set floor**: at least 12 names per cycle, topped up from concepts
-  seen alongside the focus in memory and then from the least grounded.
-- **Health reporting**: the loop records each successful cycle and the last
-  failure; streaming endpoints answer a model failure with one readable
-  sentence instead of a dropped connection. A concept whose analysis failed is
-  not persisted.
+- **Definitions reach the cycle.** The single most important fix. The cycle used
+  to receive concept names and nothing else, while the prompt told it to treat
+  anything ungrounded as an empty label. Three months of "no distinguishing
+  feature found" were starvation, not thinking. The rule is now three-tiered:
+  no definition is an empty label; a definition without grounding works fully,
+  its content posited rather than observed; grounding adds experienced content
+  on top. Missing grounding is no longer a reason to refuse a conclusion.
+  **Grounding is an amplifier, not an entry ticket.**
+- **The mind can ask us.** The critic fills `operator_request` when external
+  fact is principally required. Such inquiries are excluded from focus selection
+  — it cannot answer them itself. `GET /mind/requests`, `POST
+  /mind/inquiries/{id}/answer` (the answer enters as an external observation and
+  runs against open predictions), a "Разум спрашивает" tab, and one pending
+  question appended to the daily Telegram message.
+- **Contemplation is a conversation.** Threads carry `thread_id`; the last
+  exchanges go into the prompt with an instruction to continue rather than
+  restart and to ask outright when a clarification is missing.
+- **Autonomous concepts are back, gated.** Creation died with the evidence-gated
+  rewrite on 27 July; 39 of 168 concepts still carry `is_autonomous` and nothing
+  had set it since. Bracket labels are now collected per cycle in
+  `label_candidates`; one that recurs across `AUTONOMOUS_LABEL_MIN_CYCLES`
+  distinct cycles, matches no existing concept and survives the model's own
+  "covered by" refusal becomes a concept. On test it refused twice, correctly.
+- **Operator proposals reach the cycle.** Adding a concept had always recorded
+  its suggested relations as `proposed` evidence — 17 of them — and nothing read
+  them. They now go into the candidate prompt to be confirmed or dropped on the
+  evidence, and exploration visits concepts holding open proposals first.
+- **Memory stays on the chosen focus.** Episodes tagged with a focus concept
+  rank first; ones that merely say the word fill at most three slots; unrelated
+  ones only when the focus turns up nothing. Cycle 1031 had chosen "Оценка
+  государства ↔ прошлое" and reasoned about КОМБИНИРИСТИКА off eight episodes
+  of the old obsession.
+- **Duplicate concepts rejected.** The check compared names byte for byte, so
+  «память» was accepted beside «Память» (degree 52) and «Добро» beside «добро»
+  (degree 75). Both merged; the check now uses the resolver.
+- **"Ход мысли" tab.** `/mind/cycles` had always returned the hypothesis, the
+  critic's revision and reasoning, accepted and declined relations,
+  contradictions, the next question and the memory episodes — and nothing in the
+  interface called it.
+- **Metrics count by evidence.** A retraction changes a connection's source, so
+  `cognitive_edges` dropped to zero although the work happened. Added
+  `edges_touched_by_cognition` and `retracted_edges`.
+- **No logout on a hiccup.** Any bootstrap failure used to clear the session.
 
 ## Configuration
 
 All optional, code defaults in brackets:
 
-- `LLM_BASE_URL` [`https://api.groq.com/openai/v1`] — production is set to
+- `LLM_BASE_URL` [`https://api.groq.com/openai/v1`] — production runs
   `https://api.deepseek.com/v1`
 - `LLM_API_KEY` (falls back to `GROQ_API_KEY`, `DEEPSEEK_API_KEY`)
-- `LLM_MODEL` / `LLM_MODEL_FAST` [`openai/gpt-oss-120b` / `openai/gpt-oss-20b`]
-  — production runs `deepseek-chat` for both
-- `LLM_REASONING_EFFORT` [`low`] — applies only to `openai/gpt-oss*`; `medium`
+- `LLM_MODEL` / `LLM_MODEL_FAST` — production runs `deepseek-chat` for both
+- `LLM_REASONING_EFFORT` [`low`] — only for `openai/gpt-oss*`; `medium`
   empirically overruns the budget and returns empty content
-- `COGNITIVE_EXPLORATION_EVERY` [4]
+- `COGNITIVE_EXPLORATION_EVERY` [4], `AUTONOMOUS_LABEL_MIN_CYCLES` [3]
 - `GRAPH_SELECTION_INTERVAL_SECONDS` [86400], `GRAPH_SELECTION_BUDGET` [60],
   `GRAPH_DEGREE_CAP` [24]
 - `MEMORY_INCLUDE_SPONTANEOUS` [unset] — set to 1 to restore the old pool
 
-`.env.example` has not been updated: it carries unrelated uncommitted local
-changes. The stale `GROQ_API_KEY` is still in the production `.env` and is
-ignored, since `LLM_*` takes precedence.
+`.env.example` still carries unrelated uncommitted local edits.
 
-## State at 2026-08-22, 09:50 Asia/Chita
+## State at 2026-08-23, 10:50 Asia/Chita
 
 | Metric | Value |
 |---|---|
-| concepts | 169 |
-| active_edges | 5173 |
-| active_graph_density | 0.364 |
-| cognitive_edges | 1 |
-| decayed / displaced edges | 17 / 60 |
-| top_label_share | 0.284 |
+| concepts | 168 |
+| active_edges / density | 5112 / 0.364 |
+| cognitive_edges | 0 |
+| edges_touched_by_cognition / retracted | 1 / 1 |
 | grounded_concepts | 17 (10.1%) |
-| open_inquiries | 967 |
-| pending_predictions | 83 |
-| expired / resolved predictions | 0 / 0 |
+| open_inquiries | 1007 |
+| pending_predictions | 96 |
 | prediction_brier_score | null |
-| cognitive_cycles | 985 |
-| latest_daily_insight_date | 2026-08-21 |
+| cognitive_cycles | 1033 |
+| cognition_stalled / last_cycle_error | false / none |
 
-Cycle 985 ran on DeepSeek at 09:40 with verdict `revise`. Health fields are
-populated and `cognition_stalled` is false.
+The first edge cognition ever wrote appeared in cycle 977 on 21 August
+(`КОМБИНИРИСТИКА — Процесс генерации мысли`, label `неразличимость`) and the
+mind retracted it a day later after 13 confirmations and 17 contradictions —
+its first self-correction.
 
-Grounding coverage is moving fast under the operator's own input: 4.2% on the
-morning of 21 August, 7.8% that evening, 10.1% the next morning.
+## What to Watch Next
 
-## Emergence Criteria
-
-Four measurable conditions:
-
-1. `prediction_brier_score` below 0.25 over at least 50 resolved predictions —
-   **null**, needs observations through the ПРОВЕРКА tab.
-2. Density falling while `cognitive_edges` rises — **both halves moved**:
-   0.379 → 0.364, edges 0 → 1.
-3. `top_label_share` below 0.30 — **0.284**, formally met but weak while the
-   graph is still dense.
-4. A relation accepted between two concepts that never appeared together in an
-   inquiry — **not yet**; this is the real test of inference.
-
-The binding constraint is grounding coverage. Structure formation needs roughly
-30%. Without external observations the loop has no error signal at all.
-
-## Next Checks
-
-- Whether DeepSeek is too strict a critic. It rejected on a test cycle where
-  gpt-oss accepted at 0.9. Watch `cognitive_edges` and `accepted_cycle_rate`
-  over a few days; if edges stay at 1, reconsider the gates rather than the
-  model.
-- 2026-08-28: first wave of prediction expiry; belief confidence should start
-  to spread away from 1.00.
-- Connection selection reaches the degree cap in roughly 58 days at the default
-  budget, then settles at the floor of 668 edges.
-- Telegram delivers the daily insight at 21:40 Asia/Chita with retries at 21:55
-  and 22:10. Insights for 17–20 August are permanently missing.
-- A "mind is silent" banner on the site itself is still not built: it needs a
-  React change and a `dist` rebuild, and `ContemplationView.tsx` carries
-  uncommitted local edits. Resolve those first.
+- **Within a day:** the `needs_evidence` share, 25 of 46 cycles before the
+  definitions fix — it should fall noticeably. Whether any request appears under
+  "Разум спрашивает"; none in a day means the condition is too strict. Whether
+  `edges_touched_by_cognition` grows.
+- **2026-08-28:** first wave of prediction expiry; belief confidence should
+  start to spread away from 1.00 on its own.
+- **Within a week:** whether any label ever ripens into a concept. It refused
+  twice on test, with argument. A hundred percent refusal rate means the gate
+  needs loosening.
+- **Connection selection** reaches the degree cap around mid-October at the
+  default budget, then settles at the floor of 668 edges.
+- `prediction_brier_score` moves only on observations carrying a quotable fact.
+  The mind now names which ones it needs.
 
 ## Operating the Mind
 
-Daily input is what moves everything. On the **ПРОВЕРКА** tab an observation
-must contain a quotable fact — the matcher requires 60% word overlap between
-its evidence quote and the observation, so abstract statements close nothing.
-Reliability below 0.6 excludes the observation from consolidation. On the
-**БИБЛИОТЕКА → Основание** tab a fragment grounds a concept. New concepts
-should be rare: each one lowers coverage and pushes the threshold away.
+On **ПРОВЕРКА** an observation must contain a quotable fact — the matcher
+requires 60% word overlap between its evidence quote and the observation, so
+abstract statements close nothing. Reliability below 0.6 excludes it from
+consolidation. **БИБЛИОТЕКА → Основание** grounds a concept and multiplies what
+it already means; it is not required for the concept to work. New concepts
+should stay rare: each one lowers coverage. The concept analysis itself is on
+the concept card in БИБЛИОТЕКА, and each cycle's reasoning is under ПРОВЕРКА →
+Ход мысли.
 
 ## Working Tree
 
-Unrelated local changes, deliberately left untouched:
-
-- `.env.example`
-- `README.md`
-- `frontend/src/views/ContemplationView.tsx`
-- `scripts/mac-start.sh`
-- `scripts/setup.sh`
-- untracked `AGENTS.md`
-- untracked `backups/`
-
-Do not discard or overwrite those files without reviewing them with the user.
+Unrelated local changes, deliberately left untouched: `.env.example`,
+`README.md`, `scripts/mac-start.sh`, `scripts/setup.sh`, untracked `AGENTS.md`
+and `backups/`. Do not discard them without reviewing with the user.

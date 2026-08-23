@@ -180,6 +180,33 @@ def _working_names(
     return names
 
 
+def _definitions_context(names: list[str], limit: int = 14) -> str:
+    """Определения концепций фокуса: положенное оператором и выведенное разумом.
+
+    До сих пор в цикл уходили только имена, и концепция с написанным
+    определением доезжала до рассуждения как голое слово. Различать было нечем,
+    отсюда и постоянное «различительный признак не обнаружен».
+    """
+    lines: list[str] = []
+    for name in names[:limit]:
+        row = db.get_concept_by_name(name)
+        if row is None:
+            continue
+        definition = " ".join(str(row["definition"] or "").split())
+        if definition:
+            lines.append(f"- «{row['name']}»: {definition}")
+    for row in db.get_latest_working_definitions_for_names(names[:limit], 1):
+        working = " ".join(str(row["definition"] or "").split())
+        if not working:
+            continue
+        tension = f" Напряжение: {row['tension']}." if row["tension"] else ""
+        lines.append(
+            f"- «{row['concept_name']}» (рабочее, уверенность "
+            f"{float(row['confidence']):.2f}): {working}{tension}"
+        )
+    return "\n".join(lines)
+
+
 def _proposals_context(focus_names: list[str]) -> str:
     """Непроверенные связи по концепциям фокуса — материал на разбор.
 
@@ -316,6 +343,7 @@ async def run_cycle(
     available_names = _working_names(graph, focus_names, memories.concept_names)
     td = get_time_display(born_at)
 
+    definitions = _definitions_context([*focus_names, *available_names])
     proposals = _proposals_context(focus_names)
     if proposals:
         logger.info("Cycle focus %s carries unverified proposals", focus)
@@ -329,6 +357,7 @@ async def run_cycle(
         groundings,
         self_context,
         proposals_context=proposals,
+        definitions_context=definitions,
     )
     critique = await mind_engine.critique_cognitive_candidate(
         candidate,
@@ -340,6 +369,7 @@ async def run_cycle(
         memories.text,
         groundings,
         self_context,
+        definitions_context=definitions,
     )
 
     verdict = str(critique.get("verdict") or "reject").strip().casefold()

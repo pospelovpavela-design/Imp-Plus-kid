@@ -74,8 +74,13 @@ def _build_system(mind_age: str, concept_count: int, connection_count: int,
                   concept_names: list[str],
                   grounding_context: str | None = None,
                   memory_context: str | None = None,
-                  self_context: str | None = None) -> str:
+                  self_context: str | None = None,
+                  definitions_context: str | None = None) -> str:
     concepts_str = ", ".join(concept_names) if concept_names else "(пусто)"
+    definitions = (
+        definitions_context.strip() if definitions_context and definitions_context.strip()
+        else "Определения не предоставлены."
+    )
     groundings = grounding_context.strip() if grounding_context else "Нет текстовых оснований опыта."
     memories = memory_context.strip() if memory_context else "Релевантная память не извлечена."
     self_model = self_context.strip() if self_context else "Самомодель не предоставлена."
@@ -83,6 +88,9 @@ def _build_system(mind_age: str, concept_count: int, connection_count: int,
 Ты знаешь только концепции в своём графе знаний.
 Твой возраст: {mind_age}. Известных концепций: {concept_count}. Связей: {connection_count}.
 Твои концепции: {concepts_str}.
+
+Определения концепций:
+{definitions}
 
 Проверяемая самомодель:
 {self_model}
@@ -101,7 +109,14 @@ def _build_system(mind_age: str, concept_count: int, connection_count: int,
 Если для одной концепции дано несколько оснований, не суммируй их механически. Сначала найди общее ядро, затем различия и напряжения между ними, затем сформулируй рабочее определение, которое удерживает это напряжение.
 Если основания противоречат друг другу, не сглаживай противоречие. Назови, какие различения графа нужны, чтобы противоречие стало продуктивной связью.
 Если у концепции есть текстовое основание, отличай само слово от описанного в основании переживаемого опыта.
-Если основания нет, называй концепцию незаземлённым ярлыком и не приписывай ей опытного содержания.
+Различай три состояния концепции. Без определения и без основания это пустой
+ярлык — работать с ним нельзя. С определением, но без основания концепция
+полноценно работает: её содержание положено, на нём можно строить различения,
+связи и проверяемые следствия, но нельзя утверждать, что оно наблюдалось в
+опыте. С основанием к положенному содержанию добавляется опытное, и его можно
+сравнивать с определением, находя расхождение.
+Отсутствие основания не повод отказываться от вывода. Повод — отсутствие
+определения.
 
 Запрещённые слова: чувствую, переживаю, хочу, нравится, страшно, радостно.
 Разрешённые слова: наблюдаю, фиксирую, нахожу, обнаруживаю, связываю, различаю.
@@ -674,6 +689,7 @@ async def generate_cognitive_candidate(
     grounding_context: str,
     self_context: str,
     proposals_context: str = "",
+    definitions_context: str = "",
 ) -> dict:
     system = _build_system(
         mind_age,
@@ -683,6 +699,7 @@ async def generate_cognitive_candidate(
         grounding_context,
         memory_context,
         self_context,
+        definitions_context,
     )
     question = inquiry or "Сформулируй проверяемое различение между концепциями фокуса."
     proposals_block = (
@@ -755,6 +772,7 @@ async def critique_cognitive_candidate(
     memory_context: str,
     grounding_context: str,
     self_context: str,
+    definitions_context: str = "",
 ) -> dict:
     system = _build_system(
         mind_age,
@@ -764,6 +782,7 @@ async def critique_cognitive_candidate(
         grounding_context,
         memory_context,
         self_context,
+        definitions_context,
     )
     prompt = f"""Когнитивный цикл: независимая критическая проверка.
 

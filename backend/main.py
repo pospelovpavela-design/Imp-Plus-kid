@@ -364,8 +364,13 @@ async def add_concept(body: AddConceptBody, _=Depends(auth.require_auth)):
     """Stream concept analysis as SSE. Auth required."""
     if not body.name.strip() or not body.definition.strip():
         raise HTTPException(status_code=422, detail="Имя и определение не могут быть пустыми")
-    if db.concept_exists(body.name.strip()):
-        raise HTTPException(status_code=409, detail="Концепция уже существует")
+    existing, _ = _lookup_concepts([body.name])
+    if existing:
+        # Точное сравнение имён пропускало «память» при живой «Память»
+        raise HTTPException(
+            status_code=409,
+            detail=f"Концепция уже существует: «{existing[0]['name']}»",
+        )
 
     state = db.get_mind_state()
     born_at = state["born_at"]

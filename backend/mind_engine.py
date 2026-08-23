@@ -253,6 +253,7 @@ async def contemplate_stream(
     mind_age: str,
     connection_count: int = 0,
     grounding_context: str | None = None,
+    history_context: str = "",
 ) -> AsyncIterator[str]:
     """
     Stream response with ══ section headers (per spec).
@@ -260,7 +261,19 @@ async def contemplate_stream(
     """
     system = _build_system(mind_age, len(existing_names), connection_count, existing_names,
                            grounding_context)
-    prompt = f"""Мысль для анализа: «{thought}»
+    history_block = (
+        f"""Предыдущие реплики этого разговора:
+{history_context}
+
+Продолжай разговор, а не начинай заново: опирайся на уже сказанное, не
+повторяй разобранное и отмечай, если собеседник изменил или уточнил
+утверждение. Если для продолжения не хватает уточнения — спроси о нём прямо.
+
+"""
+        if history_context.strip()
+        else ""
+    )
+    prompt = f"""{history_block}Мысль для анализа: «{thought}»
 
 Ответь строго в следующем формате с точными заголовками:
 

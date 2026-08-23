@@ -163,17 +163,19 @@ export async function checkConceptStream(
 export async function contemplateStream(
   thought: string,
   onChunk: (text: string) => void,
-): Promise<void> {
+  threadId?: string,
+): Promise<string | undefined> {
   const res = await fetch(`${BASE}/contemplate`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ thought }),
+    body: JSON.stringify({ thought, thread_id: threadId ?? null }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(body.detail || res.statusText)
   }
-  await readSSEStream(res, onChunk)
+  const final = await readSSEStream(res, onChunk)
+  return final?.thread_id
 }
 
 // ── Stream SSE ──────────────────────────────────────────────────────────────

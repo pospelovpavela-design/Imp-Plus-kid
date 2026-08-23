@@ -143,6 +143,11 @@ def init_db() -> None:
         """)
         conn.commit()
 
+    # Safe migration: thread id turns single answers into a conversation.
+    with get_conn() as conn:
+        _ensure_column(conn, "contemplations", "thread_id TEXT")
+        conn.commit()
+
     # Safe migration: add is_autonomous column for existing databases.
     try:
         with get_conn() as conn:
@@ -1174,16 +1179,36 @@ def get_stream_event(event_id: int) -> sqlite3.Row | None:
 
 
 def insert_contemplation(user_thought: str, mind_response: str,
-                         mind_time: str, created_at: float) -> int:
+                         mind_time: str, created_at: float,
+                         thread_id: str | None = None) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO contemplations
-               (user_thought, mind_response, mind_time, created_at)
-               VALUES (?,?,?,?)""",
-            (user_thought, mind_response, mind_time, created_at),
+               (user_thought, mind_response, mind_time, created_at, thread_id)
+               VALUES (?,?,?,?,?)""",
+            (user_thought, mind_response, mind_time, created_at, thread_id),
         )
         conn.commit()
         return cur.lastrowid
+
+
+def get_contemplation_thread(thread_id: str, limit: int = 6) -> list[sqlite3.Row]:
+    """Последние реплики нити, от старых к новым.
+
+    Без этого каждое созерцание начиналось с нуля: история хранилась, но в
+    промт не подавалась, и разговора не получалось.
+    """
+    if not thread_id:
+        return []
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM contemplations
+               WHERE thread_id = ?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (thread_id, limit),
+        ).fetchall()
+    return list(reversed(rows))
 
 
 def get_contemplations(limit: int = 50, offset: int = 0) -> list[sqlite3.Row]:

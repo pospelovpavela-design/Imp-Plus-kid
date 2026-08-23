@@ -101,6 +101,7 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
 
   // ── Contemplate mode ────────────────────────────────────────────────────
   const [thought, setThought] = useState('')
+  const [threadId, setThreadId] = useState<string | undefined>(undefined)
   const [streaming, setStreaming] = useState(false)
   const [response, setResponse] = useState('')
   const [error, setError] = useState('')
@@ -159,6 +160,13 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
     setAddedDiscoveries(new Set())
   }
 
+  /** Разум помнит нить: новая начинается только по явному сбросу. */
+  function startNewThread() {
+    setThreadId(undefined)
+    setThought('')
+    resetContemplate()
+  }
+
   function resetAdd() {
     setAddResponse('')
     setAddError('')
@@ -200,12 +208,17 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
     setStreaming(true)
     let full = ''
     try {
-      await contemplateStream(thought, (chunk) => {
-        full += chunk
-        setResponse(full)
-        if (responseRef.current)
-          responseRef.current.scrollTop = responseRef.current.scrollHeight
-      })
+      const nextThread = await contemplateStream(
+        thought,
+        (chunk) => {
+          full += chunk
+          setResponse(full)
+          if (responseRef.current)
+            responseRef.current.scrollTop = responseRef.current.scrollHeight
+        },
+        threadId,
+      )
+      if (nextThread) setThreadId(nextThread)
       setDone(true)
       setDiscoveries(extractDiscoveries(full))
     } catch (err: any) {
@@ -359,6 +372,18 @@ export default function ContemplationView({ onGraphUpdate }: Props) {
                 }}
               />
               <div className="flex items-center gap-3">
+                {threadId && (
+                  <button
+                    onClick={startNewThread}
+                    disabled={streaming}
+                    className="px-4 py-2 text-xs uppercase tracking-widest border border-border
+                               text-text-dim hover:border-accent/50 hover:text-accent
+                               transition-colors disabled:opacity-40"
+                    title="Разум забудет предыдущие реплики"
+                  >
+                    Новый разговор
+                  </button>
+                )}
                 <button
                   onClick={handleContemplate}
                   disabled={!thought.trim() || streaming}

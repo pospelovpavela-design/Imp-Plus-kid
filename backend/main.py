@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -219,6 +220,17 @@ def _working_definition_row_to_dict(row):
         "mind_time": row["mind_time"],
         "created_at": row["created_at"],
     }
+
+
+def _build_contemplation_history(thread_id: str, limit: int = 6) -> str:
+    """Предыдущие реплики нити для продолжения разговора."""
+    lines = []
+    for row in db.get_contemplation_thread(thread_id, limit):
+        thought = " ".join(str(row["user_thought"]).split())
+        answer = " ".join(str(row["mind_response"]).split())
+        lines.append(f"Собеседник: {thought[:600]}")
+        lines.append(f"Я: {answer[:900]}")
+    return "\n".join(lines)
 
 
 def _build_working_definitions_context(names: list[str], limit_per_concept: int = 2) -> str:
@@ -641,6 +653,7 @@ def grounding_excerpts(
 # ── Contemplation — protected ──────────────────────────────────────────────
 
 class ContemplateBody(BaseModel):
+    thread_id: str | None = None
     thought: str
 
 
@@ -655,6 +668,8 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
     involved_names = _concept_names_in_text(body.thought)
     grounding_context = _build_grounding_context(involved_names)
     working_context = _build_working_definitions_context(involved_names)
+    thread_id = (body.thread_id or "").strip() or uuid.uuid4().hex
+    history_context = _build_contemplation_history(thread_id)
 
     async def generate():
         full_text = ""
@@ -665,6 +680,7 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
             body.thought, existing_names, td.mind_age_human,
             connection_count=graph.edge_count(),
             grounding_context=_combine_contexts(working_context, grounding_context),
+            history_context=history_context,
         )
         async for chunk in _guarded(stream):
             if isinstance(chunk, ModelFailure):
@@ -696,7 +712,8 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
 
         visible_text = visible_text.strip()
         contemplation_id = db.insert_contemplation(
-            body.thought, visible_text or full_text, td.mind_display, time.time()
+            body.thought, visible_text or full_text, td.mind_display, time.time(),
+            thread_id=thread_id,
         )
         _, _, neologism = mind_engine.extract_connections_from_response(full_text)
         if neologism:
@@ -728,7 +745,7 @@ async def contemplate(body: ContemplateBody, _=Depends(auth.require_auth)):
                 contemplation_id, confidence, td.mind_display, time.time()
             )
         asyncio.create_task(stream_engine.push_contemplation((visible_text or full_text)[:300]))
-        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+        yield _sse({"done": True, "thread_id": thread_id})
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

@@ -100,13 +100,23 @@ def _exploration_due(now: float) -> bool:
 
 
 def _explore_focus(graph: Any, now: float) -> list[str]:
-    """Пара концепций для исследования: приоритет наименее заземлённым."""
+    """Пара концепций для исследования.
+
+    Сначала те, у кого висят непроверенные предложенные связи: это самый
+    осмысленный материал в базе — его внёс оператор и уже разобрала модель.
+    Затем наименее заземлённые.
+    """
     known = name_matching.build_index(graph.all_names())
     pool: list[str] = []
-    for row in db.list_concepts_needing_grounding(limit=60):
-        resolved = name_matching.resolve(row["name"], known)
-        if resolved is not None and resolved not in pool:
-            pool.append(resolved)
+    # Порядок пула и есть приоритет: курсор идёт по нему с начала
+    for source in (
+        db.list_concepts_with_open_proposals(limit=20),
+        db.list_concepts_needing_grounding(limit=60),
+    ):
+        for row in source:
+            resolved = name_matching.resolve(row["name"], known)
+            if resolved is not None and resolved not in pool:
+                pool.append(resolved)
     if len(pool) >= 2:
         raw = db.get_cognitive_state("exploration_cursor")
         try:
@@ -154,6 +164,30 @@ def _working_names(
         if row["name"] not in names:
             names.append(row["name"])
     return names
+
+
+def _proposals_context(focus_names: list[str]) -> str:
+    """Непроверенные связи по концепциям фокуса — материал на разбор.
+
+    Разбор новой концепции выдаёт готовые взвешенные гипотезы, но до сих пор
+    цикл о них не знал: семнадцать предложений пролежали без единого вердикта.
+    """
+    ids = []
+    for name in focus_names:
+        row = db.get_concept_by_name(name)
+        if row is not None:
+            ids.append(int(row["id"]))
+    lines = []
+    for row in db.list_unanswered_proposals(ids):
+        left = db.get_concept_by_id(int(row["concept_a_id"]))
+        right = db.get_concept_by_id(int(row["concept_b_id"]))
+        if left is None or right is None:
+            continue
+        lines.append(
+            f"- {left['name']} — {row['relationship']} — {right['name']} "
+            f"(предложено с уверенностью {float(row['confidence']):.2f})"
+        )
+    return "\n".join(lines)
 
 
 def _prediction_horizon_seconds(raw: Any) -> float:
@@ -268,6 +302,9 @@ async def run_cycle(
     available_names = _working_names(graph, focus_names, memories.concept_names)
     td = get_time_display(born_at)
 
+    proposals = _proposals_context(focus_names)
+    if proposals:
+        logger.info("Cycle focus %s carries unverified proposals", focus)
     candidate = await mind_engine.generate_cognitive_candidate(
         focus,
         inquiry_text,
@@ -277,6 +314,7 @@ async def run_cycle(
         memories.text,
         groundings,
         self_context,
+        proposals_context=proposals,
     )
     critique = await mind_engine.critique_cognitive_candidate(
         candidate,

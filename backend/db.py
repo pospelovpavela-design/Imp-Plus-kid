@@ -856,6 +856,60 @@ def record_relation_evidence(
         return int(cur.lastrowid)
 
 
+_UNANSWERED = """
+    NOT EXISTS (
+        SELECT 1 FROM relation_evidence r
+        WHERE r.id > p.id
+          AND r.verdict IN ('accept', 'support', 'reject')
+          AND ((r.concept_a_id = p.concept_a_id AND r.concept_b_id = p.concept_b_id)
+            OR (r.concept_a_id = p.concept_b_id AND r.concept_b_id = p.concept_a_id))
+    )
+"""
+
+
+def list_unanswered_proposals(
+    concept_ids: list[int],
+    limit: int = 8,
+) -> list[sqlite3.Row]:
+    """Связи, предложенные при добавлении концепции и ещё не проверенные циклом.
+
+    Разбор новой концепции выдаёт готовые взвешенные гипотезы, но цикл о них
+    не знает и выводит всё заново. Здесь они возвращаются как материал на
+    проверку — но только те, по которым ещё не вынесен вердикт.
+    """
+    if not concept_ids:
+        return []
+    placeholders = ", ".join("?" for _ in concept_ids)
+    with get_conn() as conn:
+        return conn.execute(
+            f"""SELECT p.* FROM relation_evidence p
+                WHERE p.verdict = 'proposed'
+                  AND (p.concept_a_id IN ({placeholders})
+                    OR p.concept_b_id IN ({placeholders}))
+                  AND {_UNANSWERED}
+                ORDER BY p.created_at DESC
+                LIMIT ?""",
+            (*concept_ids, *concept_ids, limit),
+        ).fetchall()
+
+
+def list_concepts_with_open_proposals(limit: int = 20) -> list[sqlite3.Row]:
+    """Концепции, у которых есть непроверенные предложенные связи."""
+    with get_conn() as conn:
+        return conn.execute(
+            f"""SELECT c.* FROM concepts c
+                WHERE EXISTS (
+                    SELECT 1 FROM relation_evidence p
+                    WHERE p.verdict = 'proposed'
+                      AND (p.concept_a_id = c.id OR p.concept_b_id = c.id)
+                      AND {_UNANSWERED}
+                )
+                ORDER BY c.real_time_added DESC
+                LIMIT ?""",
+            (limit,),
+        ).fetchall()
+
+
 def insert_processing_log(concept_id: int, content: str, created_at: float) -> None:
     with get_conn() as conn:
         conn.execute(

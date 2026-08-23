@@ -673,6 +673,7 @@ async def generate_cognitive_candidate(
     memory_context: str,
     grounding_context: str,
     self_context: str,
+    proposals_context: str = "",
 ) -> dict:
     system = _build_system(
         mind_age,
@@ -684,11 +685,24 @@ async def generate_cognitive_candidate(
         self_context,
     )
     question = inquiry or "Сформулируй проверяемое различение между концепциями фокуса."
+    proposals_block = (
+        f"""
+Связи, предложенные при добавлении концепций и ещё не проверенные:
+{proposals_context}
+
+Разбери их первыми: по каждой реши, подтверждается ли она памятью или
+основаниями. Подтверждённую верни в relations со своей оценкой силы и
+уверенности, неподтверждённую не возвращай вовсе. Не принимай связь только
+потому, что её кто-то предложил.
+"""
+        if proposals_context.strip()
+        else ""
+    )
     prompt = f"""Когнитивный цикл: выдвижение гипотезы.
 
 Фокус: {focus}
 Текущий внутренний вопрос: {question}
-
+{proposals_block}
 Не изображай уверенность. Отдели наблюдаемое в памяти от предположения.
 Связь разрешено предложить только между точными именами концепций из списка.
 Прогноз должен указывать способ будущей проверки и срок в сутках (horizon_days,

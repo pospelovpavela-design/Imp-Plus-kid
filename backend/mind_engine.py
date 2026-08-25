@@ -132,11 +132,77 @@ def _build_system(mind_age: str, concept_count: int, connection_count: int,
 Всегда отвечай на русском языке."""
 
 
+def _repair_truncated_json(text: str) -> str:
+    """Достроить объект, оборванный на середине по лимиту токенов.
+
+    Ответ, обрезанный на 40-й строке, терялся целиком: консолидация падала
+    сутки подряд и не дала ни одного убеждения. Обрезаем до последнего
+    завершённого элемента и закрываем скобки.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    last_complete = -1
+    stack: list[str] = []
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+            depth += 1
+        elif char in "}]":
+            if stack:
+                stack.pop()
+            depth -= 1
+        elif char == "," and depth <= 2:
+            last_complete = index
+    if last_complete < 0:
+        return text
+    head = text[:last_complete]
+    closing = []
+    depth = 0
+    in_string = False
+    escaped = False
+    stack = []
+    for char in head:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+        elif char in "}]" and stack:
+            stack.pop()
+    closing = "".join(reversed(stack))
+    return head + closing
+
+
 def _extract_json_object(text: str) -> dict:
     fenced = re.search(r"```json\s*(\{.*\})\s*```", text, flags=re.DOTALL)
     candidate = fenced.group(1) if fenced else text
     match = re.search(r"\{.*\}", candidate, flags=re.DOTALL)
-    data = json.loads(match.group(0) if match else candidate)
+    raw = match.group(0) if match else candidate
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        start = candidate.find("{")
+        if start < 0:
+            raise
+        data = json.loads(_repair_truncated_json(candidate[start:]))
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object")
     return data
@@ -935,7 +1001,7 @@ async def consolidate_memory_batch(
     }}
   ]
 }}"""
-    return await _json_completion(system, prompt, max_tokens=900)
+    return await _json_completion(system, prompt, max_tokens=2000)
 
 
 # ── Daily synthesis ───────────────────────────────────────────────────────

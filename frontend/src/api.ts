@@ -229,18 +229,26 @@ export async function fetchOperatorRequests(): Promise<CognitiveInquiry[]> {
   return handleResponse<CognitiveInquiry[]>(res)
 }
 
+export interface LearnedFromAnswer {
+  learned?: string
+  definitions?: number
+  relations?: number
+  unclear?: string | null
+  feedback_event_ids?: number[]
+}
+
 export async function answerInquiry(
   id: number,
   content: string,
   source: string,
   reliability: number,
-): Promise<void> {
+): Promise<LearnedFromAnswer> {
   const res = await fetch(`${BASE}/mind/inquiries/${id}/answer`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ content, source, reliability }),
   })
-  await handleResponse<unknown>(res)
+  return handleResponse<LearnedFromAnswer>(res)
 }
 
 export async function fetchCognitiveCycles(limit = 30): Promise<CognitiveCycle[]> {

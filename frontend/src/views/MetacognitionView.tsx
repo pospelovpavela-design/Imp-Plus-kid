@@ -12,6 +12,7 @@ import {
   fetchSelfModel,
   resolvePrediction,
 } from '../api'
+import type { LearnedFromAnswer } from '../api'
 import type {
   CognitiveBelief,
   CognitiveCycle,
@@ -294,8 +295,9 @@ function RequestList({
   const [reliability, setReliability] = useState(0.8)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [learned, setLearned] = useState<LearnedFromAnswer | null>(null)
 
-  if (!items.length) {
+  if (!items.length && !learned) {
     return <Empty text="Разум пока ничего не просит" />
   }
 
@@ -303,7 +305,8 @@ function RequestList({
     setSaving(true)
     setError('')
     try {
-      await answerInquiry(id, content, source, reliability)
+      const result = await answerInquiry(id, content, source, reliability)
+      setLearned(result)
       setContent('')
       setSource('')
       setOpen(null)
@@ -317,6 +320,24 @@ function RequestList({
 
   return (
     <div className="divide-y divide-border">
+      {learned && (
+        <div className="mb-3 border border-teal/40 bg-teal/5 p-3">
+          <p className="text-[10px] uppercase tracking-widest text-teal">Разум понял</p>
+          <p className="mt-1 text-sm leading-relaxed text-text">
+            {learned.learned || 'Из ответа ничего не извлечено'}
+          </p>
+          <p className="mt-2 font-mono text-[10px] text-text-dim">
+            уточнено определений: {learned.definitions ?? 0} · предложено связей:{' '}
+            {learned.relations ?? 0} · закрыто прогнозов:{' '}
+            {learned.feedback_event_ids?.length ?? 0}
+          </p>
+          {learned.unclear && (
+            <p className="mt-2 text-xs leading-relaxed text-gold">
+              Осталось непонятным: {learned.unclear}
+            </p>
+          )}
+        </div>
+      )}
       {items.map((item) => (
         <div key={item.id} className="py-3">
           <p className="text-sm leading-relaxed text-text">{item.question}</p>

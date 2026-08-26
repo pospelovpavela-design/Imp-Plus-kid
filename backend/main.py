@@ -222,6 +222,116 @@ def _working_definition_row_to_dict(row):
     }
 
 
+async def _learn_and_match(
+    content: str,
+    source: str,
+    concept_names: list[str],
+    observation_id: int,
+) -> dict:
+    """Сначала научиться, потом сверить с прогнозами.
+
+    Порядок важен: объяснение полезно само по себе, даже если ни один прогноз
+    оно не решает. Сбой любой из двух частей не отменяет другую и не отменяет
+    уже сохранённое наблюдение.
+    """
+    learned: dict = {}
+    try:
+        learned = await _assimilate_observation(
+            content, source, concept_names, observation_id
+        )
+    except Exception as exc:
+        print(f"[IMPLUS] Assimilation failed: {exc}")
+
+    resolved: list[int] = []
+    try:
+        state = db.get_mind_state()
+        for payload in await cognitive_engine.resolve_predictions_with_observation(
+            content, source, concept_names, graph, state["born_at"]
+        ):
+            await stream_engine.broadcast(payload)
+            resolved.append(int(payload["id"]))
+    except Exception as exc:
+        print(f"[IMPLUS] Prediction matching failed: {exc}")
+    return {**learned, "feedback_event_ids": resolved}
+
+
+async def _assimilate_observation(
+    content: str,
+    source: str,
+    concept_names: list[str],
+    observation_id: int,
+) -> dict:
+    """Взять знание из объяснения оператора, независимо от его формы.
+
+    Сверка с прогнозом строга намеренно. Обучение идти через те же ворота не
+    должно: объяснение, не подошедшее ни к одному прогнозу, всё равно уточняет
+    определения и предлагает связи.
+    """
+    state = db.get_mind_state()
+    td = get_time_display(state["born_at"])
+    now = time.time()
+    result = await mind_engine.assimilate_explanation(
+        content,
+        source,
+        graph.all_names(),
+        td.mind_age_human,
+        graph.edge_count(),
+        _build_working_definitions_context(concept_names or graph.all_names()[:12]),
+    )
+
+    definitions = 0
+    for item in result.get("definitions") or []:
+        concept = db.get_concept_by_name_normalized(str(item.get("concept", "")))
+        definition = " ".join(str(item.get("definition") or "").split())
+        if concept is None or not definition:
+            continue
+        tension = " ".join(str(item.get("tension") or "").split()) or None
+        try:
+            confidence = float(item.get("confidence") or 0.6)
+        except (TypeError, ValueError):
+            confidence = 0.6
+        db.insert_working_definition(
+            concept["id"], definition[:2000], tension, "observation",
+            observation_id, confidence, td.mind_display, now,
+        )
+        definitions += 1
+
+    relations = 0
+    for item in result.get("relations") or []:
+        left = db.get_concept_by_name_normalized(str(item.get("source", "")))
+        right = db.get_concept_by_name_normalized(str(item.get("target", "")))
+        label = " ".join(str(item.get("relationship", "")).split())
+        if left is None or right is None or left["id"] == right["id"] or not label:
+            continue
+        try:
+            confidence = float(item.get("confidence") or 0.5)
+        except (TypeError, ValueError):
+            confidence = 0.5
+        db.record_relation_evidence(
+            left["id"], right["id"], label, "proposed", confidence, now,
+            reason=f"Следует из объяснения оператора ({source})"[:1000],
+        )
+        relations += 1
+
+    unclear = " ".join(str(result.get("unclear") or "").split())
+    if unclear and unclear.casefold() not in {"null", "none", "нет"}:
+        # Тот же потолок, что и в цикле: непонятое не должно снова залить канал
+        already = db.count_open_inquiries_for_concepts(
+            concept_names, origin=db.OPERATOR_REQUEST_ORIGIN
+        )
+        if already < cognitive_engine.MAX_OPEN_REQUESTS_PER_FOCUS:
+            db.create_inquiry(
+                unclear, concept_names, 0.9, db.OPERATOR_REQUEST_ORIGIN, now,
+            )
+
+    return {
+        "learned": " ".join(str(result.get("learned") or "").split()),
+        "definitions": definitions,
+        "relations": relations,
+        "unclear": unclear or None,
+    }
+
+
 def _build_contemplation_history(thread_id: str, limit: int = 6) -> str:
     """Предыдущие реплики нити для продолжения разговора."""
     lines = []
@@ -976,21 +1086,12 @@ async def answer_cognitive_inquiry(
         reliability=body.reliability,
     )
     db.resolve_inquiry(inquiry_id, content, now)
-    resolved: list[int] = []
-    try:
-        state = db.get_mind_state()
-        for payload in await cognitive_engine.resolve_predictions_with_observation(
-            content, source, concept_names, graph, state["born_at"]
-        ):
-            await stream_engine.broadcast(payload)
-            resolved.append(int(payload["id"]))
-    except Exception as exc:
-        print(f"[IMPLUS] Prediction matching failed: {exc}")
+    learned = await _learn_and_match(content, source, concept_names, observation_id)
     return {
         "inquiry_id": inquiry_id,
         "observation_id": observation_id,
         "event_id": event_id,
-        "feedback_event_ids": resolved,
+        **learned,
     }
 
 
@@ -1023,18 +1124,8 @@ async def add_cognitive_observation(
         salience=0.9,
         reliability=body.reliability,
     )
-    resolved: list[int] = []
-    try:
-        state = db.get_mind_state()
-        for payload in await cognitive_engine.resolve_predictions_with_observation(
-            content, source, concept_names, graph, state["born_at"]
-        ):
-            await stream_engine.broadcast(payload)
-            resolved.append(int(payload["id"]))
-    except Exception as exc:
-        # Наблюдение уже сохранено: сбой сверки не должен его отменять
-        print(f"[IMPLUS] Prediction matching failed: {exc}")
-    return {"id": observation_id, "event_id": event_id, "feedback_event_ids": resolved}
+    learned = await _learn_and_match(content, source, concept_names, observation_id)
+    return {"id": observation_id, "event_id": event_id, **learned}
 
 
 @app.post("/mind/predictions/{prediction_id}/resolve")

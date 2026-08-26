@@ -666,6 +666,66 @@ async def define_autonomous_concept(
     return await _json_completion(system, prompt, max_tokens=600)
 
 
+async def assimilate_explanation(
+    explanation: str,
+    source: str,
+    existing_names: list[str],
+    mind_age: str,
+    connection_count: int,
+    definitions_context: str = "",
+) -> dict:
+    """Извлечь знание из объяснения оператора, каким бы оно ни было по форме.
+
+    Проверка прогноза строга намеренно, иначе разум подтвердит себя чем угодно.
+    Обучение — другое: объяснение принимается в том виде, в каком дано, и задача
+    в том, чтобы взять из него максимум, а не отвергнуть за несоответствие
+    формату.
+    """
+    system = _build_system(
+        mind_age,
+        len(existing_names),
+        connection_count,
+        existing_names,
+        definitions_context=definitions_context,
+    )
+    prompt = f"""Оператор объяснил тебе следующее.
+
+Источник: {source}
+Объяснение: {explanation}
+
+Это свободная речь, а не протокол. Не требуй от неё формы и не отвергай за то,
+что она не похожа на замер. Твоя задача — понять и взять то, что можешь: уточни
+рабочие определения своих концепций, назови отношения, которые из объяснения
+следуют, и честно назови, что осталось непонятным.
+
+Определения строй через свои концепции. Отношение предлагай только между
+точными именами из списка. Если объяснение вводит различение, которого в графе
+нет, скажи об этом в поле unclear, а не выдумывай имя.
+
+Верни строго JSON:
+{{
+  "learned": "<1-3 предложения: что именно ты понял из объяснения>",
+  "definitions": [
+    {{
+      "concept": "<точное имя концепции>",
+      "definition": "<уточнённое рабочее определение через свои концепции>",
+      "tension": "<противоречие с прежним пониманием или null>",
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "relations": [
+    {{
+      "source": "<точное имя концепции>",
+      "target": "<точное имя концепции>",
+      "relationship": "<конкретный тип отношения>",
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "unclear": "<что осталось непонятным, либо null>"
+}}"""
+    return await _json_completion(system, prompt, max_tokens=1200)
+
+
 # ── Milestone reflection ──────────────────────────────────────────────────
 
 async def generate_milestone_reflection(

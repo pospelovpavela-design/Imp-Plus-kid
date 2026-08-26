@@ -30,6 +30,8 @@ DISCONFIRMED_BELIEF_FACTOR = 0.55
 EXPLORATION_EVERY_DEFAULT = 4
 # Больше вопросов про один и тот же набор концепций не заводим
 MAX_OPEN_INQUIRIES_PER_FOCUS = 12
+# Канал наружу узкий: столько просьб про один фокус оператор ещё прочитает
+MAX_OPEN_REQUESTS_PER_FOCUS = 3
 # Одно наблюдение не может закрыть весь запас прогнозов
 OBSERVATION_CANDIDATE_LIMIT = 5
 OBSERVATION_MAX_RESOLUTIONS = 3
@@ -621,15 +623,27 @@ async def run_cycle(
     operator_request = " ".join(str(critique.get("operator_request") or "").split())
     if operator_request and operator_request.casefold() not in {"null", "none", "нет"}:
         # Единственный канал наружу: не смешиваем с внутренними вопросами и
-        # держим отдельным приоритетом, чтобы он не тонул в тысяче своих
-        db.create_inquiry(
-            operator_request,
-            focus_names,
-            0.95,
-            db.OPERATOR_REQUEST_ORIGIN,
-            now,
+        # держим отдельным приоритетом, чтобы он не тонул в тысяче своих.
+        # Без потолка за сутки набежало 32 переформулировки одной просьбы —
+        # хорошая тонет среди похожих, и отвечать перестают на все.
+        already = db.count_open_inquiries_for_concepts(
+            focus_names, origin=db.OPERATOR_REQUEST_ORIGIN
         )
-        logger.info("Mind asks the operator: %s", operator_request[:120])
+        if already >= MAX_OPEN_REQUESTS_PER_FOCUS:
+            logger.info(
+                "Focus %s already has %d unanswered requests; not asking again",
+                focus,
+                already,
+            )
+        else:
+            db.create_inquiry(
+                operator_request,
+                focus_names,
+                0.95,
+                db.OPERATOR_REQUEST_ORIGIN,
+                now,
+            )
+            logger.info("Mind asks the operator: %s", operator_request[:120])
 
     open_for_focus = db.count_open_inquiries_for_concepts(focus_names)
     if open_for_focus >= MAX_OPEN_INQUIRIES_PER_FOCUS:

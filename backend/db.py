@@ -1531,7 +1531,10 @@ def get_inquiry(inquiry_id: int) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def count_open_inquiries_for_concepts(concept_names: list[str]) -> int:
+def count_open_inquiries_for_concepts(
+    concept_names: list[str],
+    origin: str | None = None,
+) -> int:
     """Сколько открытых вопросов уже задано ровно про этот набор концепций."""
     wanted = frozenset(
         " ".join(name.split()).casefold()
@@ -1541,9 +1544,16 @@ def count_open_inquiries_for_concepts(concept_names: list[str]) -> int:
     if not wanted:
         return 0
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT concept_names FROM inquiries WHERE status IN ('open', 'blocked')"
-        ).fetchall()
+        if origin is None:
+            rows = conn.execute(
+                "SELECT concept_names FROM inquiries WHERE status IN ('open', 'blocked')"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT concept_names FROM inquiries
+                   WHERE status IN ('open', 'blocked') AND origin = ?""",
+                (origin,),
+            ).fetchall()
     total = 0
     for row in rows:
         try:

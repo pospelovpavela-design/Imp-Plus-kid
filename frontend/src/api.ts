@@ -234,6 +234,7 @@ export interface LearnedFromAnswer {
   definitions?: number
   relations?: number
   unclear?: string | null
+  new_names?: string[]
   feedback_event_ids?: number[]
 }
 

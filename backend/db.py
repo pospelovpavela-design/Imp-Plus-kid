@@ -966,7 +966,9 @@ def list_ripe_label_candidates(min_cycles: int, limit: int = 5) -> list[sqlite3.
             cycles = json.loads(row["cycle_ids"] or "[]")
         except json.JSONDecodeError:
             cycles = []
-        if len(cycles) >= min_cycles:
+        # Имя из объяснения оператора приходит без номера цикла: для него
+        # созреванием считается повторение в разных объяснениях
+        if max(len(cycles), int(row["occurrences"] or 0)) >= min_cycles:
             ripe.append(row)
         if len(ripe) >= limit:
             break

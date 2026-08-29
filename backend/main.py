@@ -279,9 +279,27 @@ async def _assimilate_observation(
         _build_working_definitions_context(concept_names or graph.all_names()[:12]),
     )
 
+    index = name_matching.build_index(graph.all_names())
+    unresolved: list[str] = []
+
+    def resolve(raw) -> object | None:
+        """Имя из ответа модели → концепция графа, иначе кандидат в концепции."""
+        text = " ".join(str(raw or "").split())
+        if not text:
+            return None
+        name = name_matching.resolve(text, index)
+        if name is not None:
+            return db.get_concept_by_name(name)
+        normalized = name_matching.normalize(text)
+        if normalized:
+            db.record_label_candidate(text, normalized, None, now)
+            if text not in unresolved:
+                unresolved.append(text)
+        return None
+
     definitions = 0
     for item in result.get("definitions") or []:
-        concept = db.get_concept_by_name_normalized(str(item.get("concept", "")))
+        concept = resolve(item.get("concept"))
         definition = " ".join(str(item.get("definition") or "").split())
         if concept is None or not definition:
             continue
@@ -298,8 +316,8 @@ async def _assimilate_observation(
 
     relations = 0
     for item in result.get("relations") or []:
-        left = db.get_concept_by_name_normalized(str(item.get("source", "")))
-        right = db.get_concept_by_name_normalized(str(item.get("target", "")))
+        left = resolve(item.get("source"))
+        right = resolve(item.get("target"))
         label = " ".join(str(item.get("relationship", "")).split())
         if left is None or right is None or left["id"] == right["id"] or not label:
             continue
@@ -324,11 +342,14 @@ async def _assimilate_observation(
                 unclear, concept_names, 0.9, db.OPERATOR_REQUEST_ORIGIN, now,
             )
 
+    if unresolved:
+        print(f"[IMPLUS] New names from explanation: {', '.join(unresolved[:8])}")
     return {
         "learned": " ".join(str(result.get("learned") or "").split()),
         "definitions": definitions,
         "relations": relations,
         "unclear": unclear or None,
+        "new_names": unresolved,
     }
 
 

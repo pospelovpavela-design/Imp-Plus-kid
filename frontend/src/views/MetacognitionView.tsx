@@ -331,6 +331,12 @@ function RequestList({
             {learned.relations ?? 0} · закрыто прогнозов:{' '}
             {learned.feedback_event_ids?.length ?? 0}
           </p>
+          {learned.new_names?.length ? (
+            <p className="mt-2 text-xs leading-relaxed text-accent">
+              Названо, но в графе нет: {learned.new_names.join(', ')} — станет
+              концепцией, если повторится
+            </p>
+          ) : null}
           {learned.unclear && (
             <p className="mt-2 text-xs leading-relaxed text-gold">
               Осталось непонятным: {learned.unclear}

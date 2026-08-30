@@ -26,8 +26,15 @@ MAX_PREDICTION_HORIZON_DAYS = 30.0
 EXPIRED_BELIEF_FACTOR = 0.85
 # Опровержение внешним наблюдением бьёт по убеждению заметно сильнее
 DISCONFIRMED_BELIEF_FACTOR = 0.55
-# Каждый N-й цикл выбирает фокус в обход очереди вопросов
-EXPLORATION_EVERY_DEFAULT = 4
+# Каждый N-й цикл выбирает фокус в обход очереди вопросов.
+# Очередь на полторы тысячи вопросов, три четверти про одну пару, вела три
+# цикла из четырёх — форточка была слишком узкой.
+EXPLORATION_EVERY_DEFAULT = 2
+# Связь с таким числом подтверждений и такой уверенностью считается решённой
+SETTLED_EVIDENCE_COUNT = 3
+SETTLED_CONFIDENCE = 0.7
+# Сколько решённых вопросов цикл снимает за раз, прежде чем пойти исследовать
+SETTLED_SKIP_LIMIT = 8
 # Больше вопросов про один и тот же набор концепций не заводим
 MAX_OPEN_INQUIRIES_PER_FOCUS = 12
 # Канал наружу узкий: столько просьб про один фокус оператор ещё прочитает
@@ -393,6 +400,26 @@ def _resolve_names(raw: Any, index: dict[str, str]) -> list[str]:
     return [name for name in names if name is not None]
 
 
+def _is_settled(names: list[str]) -> bool:
+    """Пара, по которой связь уже подтверждена многократно, вопроса не требует.
+
+    Иначе цикл двадцатый раз переформулирует вывод, сделанный позавчера.
+    """
+    if len(names) != 2:
+        return False
+    left = db.get_concept_by_name(names[0])
+    right = db.get_concept_by_name(names[1])
+    if left is None or right is None:
+        return False
+    edge = db.get_connection_between(int(left["id"]), int(right["id"]))
+    if edge is None or edge["status"] != "active":
+        return False
+    return (
+        int(edge["evidence_count"]) >= SETTLED_EVIDENCE_COUNT
+        and float(edge["confidence"]) >= SETTLED_CONFIDENCE
+    )
+
+
 def _select_focus(graph: Any, inquiry: Any | None, now: float) -> tuple[list[str], Any | None]:
     if _exploration_due(now):
         explored = _explore_focus(graph, now)
@@ -405,7 +432,11 @@ def _select_focus(graph: Any, inquiry: Any | None, now: float) -> tuple[list[str
         inquiry = db.get_next_inquiry(now)
 
     known = name_matching.build_index(graph.all_names())
-    if inquiry is not None:
+    # Вопрос, ответ на который уже стоит в графе, закрывается сам. Берём
+    # следующий, но не бесконечно: очередь длинная, а цикл один.
+    for _ in range(SETTLED_SKIP_LIMIT):
+        if inquiry is None:
+            break
         names = [
             resolved
             for resolved in (
@@ -415,8 +446,22 @@ def _select_focus(graph: Any, inquiry: Any | None, now: float) -> tuple[list[str
             )
             if resolved is not None
         ]
-        if names:
-            return list(dict.fromkeys(names)), inquiry
+        names = list(dict.fromkeys(names))
+        if not names:
+            break
+        if not _is_settled(names):
+            return names, inquiry
+        db.resolve_inquiry(
+            int(inquiry["id"]),
+            "Снят: связь по этой паре уже подтверждена в графе.",
+            now,
+        )
+        logger.info(
+            "Inquiry %s dropped: %s is already settled",
+            inquiry["id"],
+            " ↔ ".join(names),
+        )
+        inquiry = db.get_next_inquiry(now)
 
     pair = graph.random_two_concepts()
     if pair is None:

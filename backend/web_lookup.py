@@ -10,13 +10,17 @@
 from __future__ import annotations
 
 import os
+import time
 
 import httpx
 
 API = "https://ru.wikipedia.org/w/api.php"
 PAGE = "https://ru.wikipedia.org/wiki/"
-USER_AGENT = "IMPLUS/1.0 (isolated mind research)"
+USER_AGENT = "IMPLUS/1.0 (isolated mind research; pospelovpavel.a@gmail.com)"
 MAX_EXCERPT_CHARS = 3000
+# Запрос раз в полчаса из цикла, но подряд их два — держим паузу между ними
+REQUEST_PAUSE_SECONDS = 1.0
+_last_request = 0.0
 
 
 def enabled() -> bool:
@@ -30,6 +34,11 @@ def enabled() -> bool:
 
 
 def _get(params: dict) -> dict:
+    global _last_request
+    wait = REQUEST_PAUSE_SECONDS - (time.monotonic() - _last_request)
+    if wait > 0:
+        time.sleep(wait)
+    _last_request = time.monotonic()
     response = httpx.get(
         API,
         params={**params, "format": "json"},
@@ -70,9 +79,19 @@ def extract(title: str) -> tuple[str, str]:
 
 
 def lookup(term: str) -> dict | None:
-    """Первая статья с содержательной вводной частью, либо None."""
-    for title in search(term):
-        text, url = extract(title)
+    """Первая статья с содержательной вводной частью, либо None.
+
+    Отказ источника — не повод ронять цикл: разум обойдётся без материала.
+    """
+    try:
+        titles = search(term)
+    except httpx.HTTPError:
+        return None
+    for title in titles:
+        try:
+            text, url = extract(title)
+        except httpx.HTTPError:
+            return None
         if len(text) >= 120:
             return {"title": title, "text": text, "url": url}
     return None

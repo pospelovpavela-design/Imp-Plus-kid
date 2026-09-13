@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -980,7 +981,8 @@ async def maybe_look_up(graph: Any, born_at: float) -> dict | None:
     db.set_cognitive_state(f"web_lookup:{concept_id}", str(now), now)
 
     try:
-        found = web_lookup.lookup(concept["name"])
+        # Запрос синхронный: в потоке, чтобы не морозить сервер на время ответа
+        found = await asyncio.to_thread(web_lookup.lookup, concept["name"])
     except Exception as exc:
         logger.warning("Web lookup failed for %r: %s", concept["name"], exc)
         return None

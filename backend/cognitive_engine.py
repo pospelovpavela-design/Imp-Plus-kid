@@ -15,6 +15,7 @@ import db
 import memory_engine
 import mind_engine
 import name_matching
+import web_lookup
 from time_engine import format_mind_timestamp, get_time_display
 
 logger = logging.getLogger("cognitive_engine")
@@ -54,7 +55,7 @@ GRAPH_DEGREE_CAP_DEFAULT = 24
 _WORD_RE = re.compile(r"[^\W_]{3,}", flags=re.UNICODE)
 _LABEL_RE = re.compile(r"\[([^\[\]]{3,60})\]")
 # Ярлык становится концепцией, только повторившись в разных циклах
-AUTONOMOUS_LABEL_MIN_CYCLES = 3
+AUTONOMOUS_LABEL_MIN_CYCLES = 2
 
 
 def _json_list(raw: str | None) -> list:
@@ -956,6 +957,101 @@ def expire_predictions(born_at: float) -> list[dict]:
             "created_at": now,
         })
     return events
+
+
+async def maybe_look_up(graph: Any, born_at: float) -> dict | None:
+    """Найти внешний материал для концепции, у которой нет основания.
+
+    Внешний текст входит тем же путём, что и фрагмент от оператора: как сырой
+    материал с указанием источника, а не как готовый ответ. Источник остаётся
+    в базе, чтобы выведенное всегда можно было отделить от вычитанного.
+    """
+    if not web_lookup.enabled():
+        return None
+    now = time.time()
+    candidates = [
+        row for row in db.list_concepts_needing_grounding(limit=40)
+        if not db.get_cognitive_state(f"web_lookup:{row['id']}")
+    ]
+    if not candidates:
+        return None
+    concept = candidates[0]
+    concept_id = int(concept["id"])
+    db.set_cognitive_state(f"web_lookup:{concept_id}", str(now), now)
+
+    try:
+        found = web_lookup.lookup(concept["name"])
+    except Exception as exc:
+        logger.warning("Web lookup failed for %r: %s", concept["name"], exc)
+        return None
+    if found is None:
+        logger.info("Nothing found for %r", concept["name"])
+        return None
+
+    td = get_time_display(born_at)
+    names = graph.all_names()
+    verdict = await mind_engine.judge_external_material(
+        concept["name"], concept["definition"], found["title"], found["text"],
+        names[:36], td.mind_age_human, graph.edge_count(),
+    )
+    if str(verdict.get("verdict") or "").strip().casefold() != "accept":
+        logger.info(
+            "External material for %r refused: %s",
+            concept["name"],
+            verdict.get("about") or verdict.get("reason"),
+        )
+        return None
+
+    grounding_id = db.insert_grounding_excerpt(
+        found["title"], "Википедия", found["url"], found["text"], td.mind_display, now,
+    )
+    db.link_grounding_to_concept(
+        concept_id, grounding_id,
+        f"Найдено самим разумом по имени концепции. {verdict.get('reason') or ''}"[:500],
+        now,
+    )
+
+    analysis = await mind_engine.analyze_grounding_excerpt(
+        found["title"], found["text"], names, td.mind_age_human,
+        connection_count=graph.edge_count(), author="Википедия",
+        source=found["url"], preferred_concept_names=[concept["name"]],
+    )
+    definitions = 0
+    for item in analysis.get("definitions") or []:
+        target = db.get_concept_by_name_normalized(str(item.get("concept", "")))
+        definition = " ".join(str(item.get("definition") or "").split())
+        if target is None or not definition:
+            continue
+        db.insert_working_definition(
+            int(target["id"]), definition[:2000],
+            " ".join(str(item.get("tension") or "").split()) or None,
+            "web", grounding_id, _clamp(item.get("confidence"), 0.6),
+            td.mind_display, now,
+        )
+        definitions += 1
+
+    content = (
+        f"Разум нашёл внешний материал для концепции «{concept['name']}» "
+        f"({found['title']}, {found['url']}) и переработал его: "
+        f"{' '.join(str(analysis.get('experience') or '').split())[:400]}"
+    )
+    mind_time = format_mind_timestamp(born_at, now)
+    event_id = db.insert_stream_event(
+        mind_time, "observation", content, [concept["name"]], now,
+        salience=0.8, reliability=0.55,
+    )
+    logger.info(
+        "Grounded %r from %s (%d working definitions)",
+        concept["name"], found["url"], definitions,
+    )
+    return {
+        "id": event_id,
+        "mind_time": mind_time,
+        "type": "observation",
+        "content": content,
+        "concepts_involved": [concept["name"]],
+        "created_at": now,
+    }
 
 
 def maybe_select_connections(graph: Any) -> dict | None:

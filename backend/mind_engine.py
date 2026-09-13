@@ -726,6 +726,45 @@ async def assimilate_explanation(
     return await _json_completion(system, prompt, max_tokens=1200)
 
 
+async def judge_external_material(
+    concept_name: str,
+    concept_definition: str,
+    title: str,
+    excerpt: str,
+    existing_names: list[str],
+    mind_age: str,
+    connection_count: int,
+) -> dict:
+    """Решить, о том ли это, что названо концепцией.
+
+    Поиск по слову находит однокоренное, а не одноимённое: «неповторимость»
+    приводит к фильму 1957 года. Без этой проверки концепция заземлилась бы
+    пересказом чужого сюжета.
+    """
+    system = _build_system(mind_age, len(existing_names), connection_count, existing_names)
+    prompt = f"""Найден внешний текст. Реши, описывает ли он то же, что твоя концепция.
+
+Твоя концепция: «{concept_name}»
+Твоё определение: {concept_definition or "определения нет"}
+
+Найденный текст: «{title}»
+{excerpt}
+
+Совпадение слова недостаточно: текст может быть об однокоренном, об омониме или
+о частном случае из чужой области. Принимай, только если описанное в тексте —
+то же самое, что положено твоим определением, и может стать материалом опыта
+для него. Сомнение — повод отказать: незаземлённая концепция честнее
+заземлённой чужим предметом.
+
+Верни строго JSON:
+{{
+  "verdict": "accept | reject",
+  "reason": "<одно предложение, почему>",
+  "about": "<чему текст посвящён на самом деле, если reject, иначе null>"
+}}"""
+    return await _json_completion(system, prompt, max_tokens=400)
+
+
 # ── Milestone reflection ──────────────────────────────────────────────────
 
 async def generate_milestone_reflection(

@@ -232,6 +232,9 @@ async def spontaneous_loop() -> None:
             named = await cognitive_engine.maybe_create_concept(_concept_graph, _born_at)
             if named is not None:
                 await broadcast(named)
+            grounded = await cognitive_engine.maybe_look_up(_concept_graph, _born_at)
+            if grounded is not None:
+                await broadcast(grounded)
             consolidation = await cognitive_engine.maybe_consolidate(
                 _concept_graph,
                 _born_at,

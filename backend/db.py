@@ -1,5 +1,6 @@
 """SQLite persistence with additive, non-destructive production migrations."""
 import sqlite3
+import difflib
 import json
 import hashlib
 import math
@@ -1533,6 +1534,14 @@ def get_inquiry(inquiry_id: int) -> sqlite3.Row | None:
         ).fetchone()
 
 
+def count_open_inquiries() -> int:
+    """Сколько вопросов ждут своей очереди."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM inquiries WHERE status IN ('open', 'blocked')"
+        ).fetchone()[0]
+
+
 def count_open_inquiries_for_concepts(
     concept_names: list[str],
     origin: str | None = None,
@@ -1622,6 +1631,28 @@ def list_inquiries(
         ).fetchall()
 
 
+BELIEF_SAME_MEANING = 0.82
+
+
+def _find_similar_belief(conn: sqlite3.Connection, statement: str):
+    """Активное убеждение, говорящее то же самое другими словами.
+
+    Отпечаток считался по точному тексту, и перефразировки проходили насквозь:
+    из 250 свежих убеждений различными по смыслу оказались 117, а одна группа
+    насчитывала 32 почти одинаковых утверждения.
+    """
+    head = statement[:140].casefold()
+    best = None
+    best_ratio = BELIEF_SAME_MEANING
+    for row in conn.execute("SELECT * FROM beliefs WHERE status='active'"):
+        ratio = difflib.SequenceMatcher(
+            None, head, str(row["statement"])[:140].casefold()
+        ).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = row, ratio
+    return best
+
+
 def upsert_belief(
     statement: str,
     concept_names: list[str],
@@ -1638,6 +1669,8 @@ def upsert_belief(
         existing = conn.execute(
             "SELECT * FROM beliefs WHERE fingerprint=?", (fingerprint,)
         ).fetchone()
+        if existing is None:
+            existing = _find_similar_belief(conn, statement)
         if existing:
             prior_evidence = json.loads(existing["evidence_event_ids"] or "[]")
             combined = list(dict.fromkeys([*prior_evidence, *evidence_event_ids]))

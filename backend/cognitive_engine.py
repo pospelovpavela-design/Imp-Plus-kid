@@ -39,6 +39,16 @@ SETTLED_CONFIDENCE = 0.7
 SETTLED_SKIP_LIMIT = 8
 # Больше вопросов про один и тот же набор концепций не заводим
 MAX_OPEN_INQUIRIES_PER_FOCUS = 12
+# Приоритеты очереди. Противоречие — место, где граф сам себе противоречит, и
+# это самый информативный вопрос из всех. Консолидация назначала приоритет сама,
+# ставила до 1.0 и навсегда выигрывала сортировку: за 400 циклов противоречия не
+# брались ни разу, а вопросы консолидации дали 4% accept против 13% у поиска.
+CONTRADICTION_PRIORITY = 0.95
+CONSOLIDATION_PRIORITY_CAP = 0.55
+MAX_CONSOLIDATION_INQUIRIES = 2
+# Очередь пишется, но не читается: 4634 открытых, тронуто 266. Выше этой отметки
+# внутренние вопросы не заводим — противоречия и просьбы к оператору проходят.
+MAX_OPEN_INQUIRIES = 1500
 # Канал наружу узкий: столько просьб про один фокус оператор ещё прочитает
 MAX_OPEN_REQUESTS_PER_FOCUS = 3
 # Одно наблюдение не может закрыть весь запас прогнозов
@@ -194,6 +204,21 @@ def _working_names(
     return names
 
 
+_HAS_LETTER = re.compile(r"[^\W\d_]", flags=re.UNICODE)
+
+
+def _is_nameable(label: str) -> bool:
+    """Годится ли строка в имя различения.
+
+    В реестр попадала строка «37322, 37319, 37323» — номера эпизодов памяти,
+    взятые в скобки и принятые за ярлык.
+    """
+    if not _HAS_LETTER.search(label):
+        return False
+    letters = sum(1 for ch in label if _HAS_LETTER.match(ch))
+    return letters >= max(3, len(label) // 3)
+
+
 def _harvest_labels(text: str, cycle_id: int | None, graph: Any, now: float) -> None:
     """Собрать временные ярлыки [в скобках] из текста цикла.
 
@@ -204,7 +229,9 @@ def _harvest_labels(text: str, cycle_id: int | None, graph: Any, now: float) -> 
     for raw in _LABEL_RE.findall(text or ""):
         label = " ".join(raw.split()).strip()
         normalized = name_matching.normalize(label)
-        if not normalized or name_matching.resolve(label, known) is not None:
+        if not normalized or not _is_nameable(label):
+            continue
+        if name_matching.resolve(label, known) is not None:
             continue
         db.record_label_candidate(label, normalized, cycle_id, now)
 
@@ -667,6 +694,15 @@ async def run_cycle(
             top,
         )
 
+    missing = " ".join(str(critique.get("missing_distinction") or "").split()).strip(" []")
+    if missing and missing.casefold() not in {"null", "none", "нет"} and _is_nameable(missing):
+        known_names = name_matching.build_index(graph.all_names())
+        if name_matching.resolve(missing, known_names) is None:
+            db.record_label_candidate(
+                missing, name_matching.normalize(missing), cycle_id, now
+            )
+            logger.info("Contradiction names a missing distinction: %r", missing)
+
     operator_request = " ".join(str(critique.get("operator_request") or "").split())
     if operator_request and operator_request.casefold() not in {"null", "none", "нет"}:
         # Единственный канал наружу: не смешиваем с внутренними вопросами и
@@ -701,7 +737,10 @@ async def run_cycle(
         )
     else:
         next_question = candidate.get("next_question")
-        if isinstance(next_question, str) and next_question.strip():
+        queue_full = db.count_open_inquiries() >= MAX_OPEN_INQUIRIES
+        if queue_full:
+            logger.info("Inquiry queue is full; keeping the follow-up question unasked")
+        elif isinstance(next_question, str) and next_question.strip():
             db.create_inquiry(
                 next_question,
                 focus_names,
@@ -717,7 +756,7 @@ async def run_cycle(
                 db.create_inquiry(
                     f"Как проверить противоречие: {contradiction.strip()}",
                     focus_names,
-                    0.8,
+                    CONTRADICTION_PRIORITY,
                     "critic_contradiction",
                     now,
                 )
@@ -1155,7 +1194,11 @@ async def maybe_consolidate(graph: Any, born_at: float) -> dict | None:
         if statement and evidence and confidence >= 0.65:
             db.upsert_belief(statement, names, confidence, evidence, now)
 
+    created = 0
+    queue_full = db.count_open_inquiries() >= MAX_OPEN_INQUIRIES
     for item in result.get("inquiries") or []:
+        if created >= MAX_CONSOLIDATION_INQUIRIES or queue_full:
+            break
         if not isinstance(item, dict):
             continue
         question = str(item.get("question") or "").strip()
@@ -1164,10 +1207,11 @@ async def maybe_consolidate(graph: Any, born_at: float) -> dict | None:
             db.create_inquiry(
                 question,
                 names,
-                _clamp(item.get("priority"), 0.5),
+                min(_clamp(item.get("priority"), 0.5), CONSOLIDATION_PRIORITY_CAP),
                 "consolidation",
                 now,
             )
+            created += 1
 
     db.mark_events_consolidated(event_ids)
     db.insert_consolidation_run(event_ids, summary, result, "accepted", now)
